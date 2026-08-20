@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
+import type {
+  TrackedObjectReaderPortV1,
+  TrackedObjectReadRequestV1,
+} from '@jigwright/core/tracked-object-reader-port';
+
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import { runGitBuffer } from './git.ts';
@@ -104,6 +109,32 @@ export type TrackedTreeSnapshot = {
   entries: TrackedTreeEntry[];
   totalScannedBlobBytes: number;
   budgetExceeded: boolean;
+};
+
+export const workflowTrackedObjectReaderPort: TrackedObjectReaderPortV1 = {
+  contractVersion: 'jigwright.tracked-object-reader-port.v1',
+  readPinnedTree(request: TrackedObjectReadRequestV1) {
+    return readPinnedTrackedTree({
+      repositoryRoot: request.repositoryRoot,
+      treeOid: request.treeOid,
+      ...(request.limits === undefined
+        ? {}
+        : {
+            limits: {
+              maxBlobBytes: request.limits.maxBlobBytes,
+              maxTotalScannedBytes: request.limits.maxTotalScannedBytes,
+            },
+          }),
+      ...(request.operationalDeadline === undefined
+        ? {}
+        : {
+            operationalDeadline: {
+              expiresAtMonotonicMillis:
+                request.operationalDeadline.expiresAtMonotonicMillis,
+            },
+          }),
+    });
+  },
 };
 
 /**

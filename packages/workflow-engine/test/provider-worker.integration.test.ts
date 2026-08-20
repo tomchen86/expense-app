@@ -11,6 +11,8 @@ import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { createEvidenceNode } from '../src/adapters/compatibility/investigation-v2/evidence-node.ts';
 import { writeEvidenceNode } from '../src/runtime/storage-journal/evidence-object-store.ts';
 import { projectProviderInvocationExecution } from '../src/modules/provider-orchestration/execution-core.ts';
+import type { AgentRuntimePort } from '../src/modules/provider-orchestration/agent-runtime-port.ts';
+import type { ProviderInvocationAcceptanceBinding } from '../src/modules/provider-orchestration/agent-runtime-port.ts';
 import {
   buildContextManifest,
   inspectDurableEpochContextStore,
@@ -51,9 +53,11 @@ import {
 } from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
+import { createAsyncCliDispatcherForTesting } from '../src/cli.ts';
 import {
   createProviderWorkerDispatcherForTesting,
   runProviderWorker,
+  runProviderWorkerAsync,
 } from '../src/entrypoints/worker/provider-worker.ts';
 import {
   createFixtureRepository,
@@ -61,8 +65,40 @@ import {
   writeReadyV2ExemptChange,
 } from './fixture.ts';
 
+test('hidden provider-worker CLI command dispatches the async worker entry', async () => {
+  const calls: Array<{ cwd: string; invocationId: string }> = [];
+  const dispatch = createAsyncCliDispatcherForTesting(
+    async (cwd, invocationId) => {
+      calls.push({ cwd, invocationId });
+      return {
+        schemaVersion: 1,
+        kind: 'provider-worker-result',
+        invocationId,
+        state: 'leased',
+        revision: 3,
+        launched: false,
+        failure: null,
+        completionReceipt: null,
+      };
+    },
+  );
+
+  const result = await dispatch(
+    ['provider-worker', 'invocation-async-cli'],
+    '/repository',
+  );
+  assert.deepEqual(calls, [
+    { cwd: '/repository', invocationId: 'invocation-async-cli' },
+  ]);
+  assert.equal(result.command, 'provider-worker');
+  assert.equal(
+    (result.result as { invocationId: string }).invocationId,
+    'invocation-async-cli',
+  );
+});
+
 for (const objectFormat of ['sha1', 'sha256'] as const) {
-  test(`provider worker completes the exact durable invocation on ${objectFormat}`, () => {
+  test(`async provider worker completes the exact durable invocation through AgentRuntimePort on ${objectFormat}`, async () => {
     const repository = createFixtureRepository({ objectFormat });
     const changeId = `worker-${objectFormat}`;
     try {
@@ -95,14 +131,28 @@ for (const objectFormat of ['sha1', 'sha256'] as const) {
       assert.equal(request.baseTree.length, objectFormat === 'sha1' ? 40 : 64);
 
       let launches = 0;
-      const completed = runProviderWorker(repository, invocationId, {
-        workerId: `fake-worker-${objectFormat}`,
-        runner(input) {
+      let launchBinding:
+        | Parameters<
+            NonNullable<AgentRuntimePort['runSingleShotAsync']>
+          >[0]['acceptanceBinding']
+        | null = null;
+      const controller = new AbortController();
+      const agentRuntime: AgentRuntimePort = {
+        runSingleShot() {
+          assert.fail('production async worker must not use runSingleShot');
+        },
+        async runSingleShotAsync(input, options) {
           launches += 1;
+          launchBinding = input.acceptanceBinding;
+          assert.equal(options.signal, controller.signal);
           assert.equal(
             sha256(canonicalJson(input.semanticOutputSchema)),
             request.outputSchema.digest,
           );
+          options.onActivity?.({ type: 'spawned', elapsedMs: 0 });
+          options.onActivity?.({ type: 'stdout', elapsedMs: 2, bytes: 10 });
+          options.onActivity?.({ type: 'stderr', elapsedMs: 3, bytes: 4 });
+          options.onActivity?.({ type: 'exited', elapsedMs: 7 });
           const semanticOutput = {
             reference: invocationId,
             terms: [{ kind: 'symbol', value: 'ProviderWorker' }],
@@ -127,12 +177,58 @@ for (const objectFormat of ['sha1', 'sha256'] as const) {
             elapsedMs: 7,
           };
         },
+      };
+      const completed = await runProviderWorkerAsync(repository, invocationId, {
+        workerId: `fake-worker-${objectFormat}`,
+        platform: 'aix',
+        signal: controller.signal,
+        agentRuntime,
+        runner() {
+          throw new Error('agentRuntime must take precedence over runner');
+        },
       });
 
       assert.equal(completed.state, 'succeeded');
       assert.equal(completed.launched, true);
       const durable = readProviderInvocation(runtime, invocationId);
       assert.equal(durable.state, 'succeeded');
+      const acceptedBinding =
+        launchBinding as ProviderInvocationAcceptanceBinding | null;
+      assert.ok(acceptedBinding);
+      assert.ok(durable.runtimeReceipt);
+      assert.deepEqual(completed.completionReceipt, durable.runtimeReceipt);
+      const receiptPayload = { ...durable.runtimeReceipt };
+      delete (receiptPayload as { receiptDigest?: string }).receiptDigest;
+      assert.equal(
+        durable.runtimeReceipt.receiptDigest,
+        sha256(canonicalJson(receiptPayload)),
+      );
+      assert.deepEqual(receiptPayload, {
+        schemaVersion: 1,
+        kind: 'agent-runtime-completion-receipt',
+        invocationId,
+        requestDigest: request.requestDigest,
+        leasedRevision: durable.revision - 1,
+        terminalRevision: durable.revision,
+        leaseGeneration: durable.leaseGeneration,
+        executionJobId: acceptedBinding.executionJobId,
+        executionAttemptId: acceptedBinding.executionAttemptId,
+        executionRevision: acceptedBinding.executionRevision,
+        executionStateDigest: acceptedBinding.executionStateDigest,
+        acceptanceBindingDigest: acceptedBinding.bindingDigest,
+        terminalState: 'succeeded',
+        launched: true,
+        progress: {
+          schemaVersion: 1,
+          kind: 'agent-runtime-process-progress',
+          processState: 'exited',
+          eventCount: 4,
+          stdoutBytes: 10,
+          stderrBytes: 4,
+          lastProcessActivityElapsedMs: 7,
+          lastProviderActivityElapsedMs: 3,
+        },
+      });
       assert.equal(
         durable.result?.runtimeObservation?.assurance,
         'unchanged-governed-projection',
@@ -146,15 +242,39 @@ for (const objectFormat of ['sha1', 'sha256'] as const) {
         PROVIDER_RUNNER_RESIDUALS,
       );
 
-      const replayed = runProviderWorker(repository, invocationId, {
-        runner() {
-          launches += 1;
-          throw new Error('terminal invocations must not relaunch');
-        },
+      const replayed = await runProviderWorkerAsync(repository, invocationId, {
+        agentRuntime,
       });
       assert.equal(replayed.state, 'succeeded');
       assert.equal(replayed.launched, false);
+      assert.deepEqual(replayed.completionReceipt, durable.runtimeReceipt);
+      assert.equal(replayed.completionReceipt?.launched, true);
       assert.equal(launches, 1);
+
+      const statePath = path.join(
+        runtime.invocations,
+        invocationId,
+        'state.json',
+      );
+      const tampered = JSON.parse(fs.readFileSync(statePath, 'utf8')) as {
+        runtimeReceipt: Record<string, unknown>;
+      };
+      tampered.runtimeReceipt.executionAttemptId =
+        'attempt-legacy-invocation-mismatched';
+      const tamperedReceiptPayload = { ...tampered.runtimeReceipt };
+      delete tamperedReceiptPayload.receiptDigest;
+      tampered.runtimeReceipt.receiptDigest = sha256(
+        canonicalJson(tamperedReceiptPayload),
+      );
+      fs.writeFileSync(statePath, `${canonicalJson(tampered)}\n`);
+      await assert.rejects(
+        () =>
+          runProviderWorkerAsync(repository, invocationId, { agentRuntime }),
+        (error: unknown) =>
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'PROVIDER_INVOCATION_INVALID',
+      );
     } finally {
       fs.rmSync(repository, { recursive: true, force: true });
     }
@@ -185,6 +305,17 @@ test('provider worker records launch and admission failure durably', () => {
     assert.equal(failed.state, 'failed');
     assert.equal(failed.failure?.code, 'PROVIDER_UNAVAILABLE');
 
+    const locator = discoverRepository(repository);
+    const runtime = investigationRuntimePaths(
+      locator.gitCommonDirectory,
+      'workflow-engine',
+    );
+    assert.equal(
+      readProviderInvocation(runtime, invocationId).runtimeReceipt,
+      undefined,
+      'the optional projection must not rewrite synchronous legacy records',
+    );
+
     const replayed = runProviderWorker(repository, invocationId, {
       runner() {
         launches += 1;
@@ -194,6 +325,70 @@ test('provider worker records launch and admission failure durably', () => {
     assert.equal(replayed.state, 'failed');
     assert.equal(replayed.launched, false);
     assert.equal(launches, 1);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('async provider worker records a rejected launch and partial progress receipt', async () => {
+  const repository = createFixtureRepository();
+  const changeId = 'worker-async-failure';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const started = startPropose(repository, changeId, intent(), {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const invocationId = started.investigation!.providerInvocationId;
+    const locator = discoverRepository(repository);
+    const runtime = investigationRuntimePaths(
+      locator.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const failed = await runProviderWorkerAsync(repository, invocationId, {
+      agentRuntime: {
+        runSingleShot() {
+          assert.fail('async worker must not call the sync runtime');
+        },
+        async runSingleShotAsync(_input, options) {
+          options.onActivity?.({ type: 'spawned', elapsedMs: 0 });
+          throw workflowError(
+            'PROVIDER_UNAVAILABLE',
+            'The selected provider is unavailable.',
+            ExitCode.verification,
+          );
+        },
+      },
+    });
+
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.failure?.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(failed.completionReceipt?.terminalState, 'failed');
+    assert.deepEqual(failed.completionReceipt?.progress, {
+      schemaVersion: 1,
+      kind: 'agent-runtime-process-progress',
+      processState: 'running',
+      eventCount: 1,
+      stdoutBytes: 0,
+      stderrBytes: 0,
+      lastProcessActivityElapsedMs: 0,
+      lastProviderActivityElapsedMs: null,
+    });
+    const durable = readProviderInvocation(runtime, invocationId);
+    assert.deepEqual(failed.completionReceipt, durable.runtimeReceipt);
+    assert.equal(durable.runtimeReceipt?.terminalState, 'failed');
+    const replayed = await runProviderWorkerAsync(repository, invocationId, {
+      agentRuntime: {
+        runSingleShot() {
+          assert.fail('terminal replay must not call the sync runtime');
+        },
+        async runSingleShotAsync() {
+          assert.fail('terminal replay must not relaunch async work');
+        },
+      },
+    });
+    assert.equal(replayed.launched, false);
+    assert.deepEqual(replayed.completionReceipt, durable.runtimeReceipt);
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

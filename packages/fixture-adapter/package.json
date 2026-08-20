@@ -1,0 +1,19 @@
+{
+  "name": "@jigwright/fixture-adapter",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/fixture-check-registry.ts",
+    "./tracked-object-reader": "./src/fixture-tracked-object-reader.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@jigwright/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
+  }
+}

@@ -26,6 +26,7 @@ import {
 import {
   createProviderInvocationRequest,
   type ProviderInvocationRequest,
+  type ProviderRunnerReport,
 } from '../../modules/provider-orchestration/provider-contracts.ts';
 import {
   BLIND_SURVEY_OUTPUT_SCHEMA,
@@ -51,7 +52,6 @@ import {
   runBuiltInProvider,
   type ProviderPreflightOptions,
   type ProviderResolution,
-  type ProviderRunnerReport,
   type ProviderRunInput,
   type ProviderRunOptions,
 } from './provider-runner.ts';

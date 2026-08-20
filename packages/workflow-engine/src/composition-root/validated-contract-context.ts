@@ -8,6 +8,7 @@ import {
   loadValidatedChangeContract,
   type ValidatedChangeContract,
 } from '../adapters/planning/openspec/documents/managed-change-contract.ts';
+import { planningProviderBindingReader } from '../runtime/repository-transaction/planning-provider-binding-store.ts';
 
 export function loadStableValidatedChangeContract(
   initialGit: GitState,
@@ -21,6 +22,7 @@ export function loadStableValidatedChangeContract(
   const contract = loadValidatedChangeContract(
     initialGit.repositoryRoot,
     changeId,
+    planningProviderBindingReader,
   );
   const git = discoverRepository(initialGit.repositoryRoot);
   const afterFingerprint = fingerprintRepositoryProjection(

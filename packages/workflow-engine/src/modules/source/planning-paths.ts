@@ -2,6 +2,19 @@ import type { ManagedSchemaName } from '../../adapters/consumer/expense-app/work
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import { normalizeChangedPath } from '../../runtime/session-workspace/paths.ts';
 
+const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+export function planningProviderBindingPath(changeId: string): string {
+  if (!CHANGE_ID.test(changeId) || changeId === 'archive') {
+    throw workflowError(
+      'PLANNING_CHANGE_ID_INVALID',
+      'Planning-provider binding requires one valid non-reserved change ID.',
+      ExitCode.guard,
+    );
+  }
+  return `workflow/change-providers/${changeId}.json`;
+}
+
 export function assertPlanningPaths(
   changeRoot: string,
   changeId: string,
@@ -17,9 +30,10 @@ export function assertPlanningPaths(
     );
   }
   const prefix = `${changeRoot}/${changeId}/`;
-  const exact = new Set(
-    requiredPlanningArtifactPaths(changeRoot, changeId, schemaName),
-  );
+  const exact = new Set([
+    ...requiredPlanningArtifactPaths(changeRoot, changeId, schemaName),
+    planningProviderBindingPath(changeId),
+  ]);
   const deleted = new Set(deletedPaths.map(normalizeChangedPath));
   const invalid = changedPaths.filter((candidate) => {
     const normalized = normalizeChangedPath(candidate);

@@ -106,6 +106,20 @@ export function createFixtureRepository(
       },
     },
   });
+  writeJson(
+    path.join(repository, 'workflow/change-providers/demo-change.json'),
+    {
+      schemaVersion: 1,
+      changeId: 'demo-change',
+      providerId: 'openspec',
+      adapterContractVersion: 1,
+      providerRequirement: {
+        package: '@fission-ai/openspec',
+        version: '1.6.0',
+      },
+      planningRoot: 'openspec/changes/demo-change',
+    },
+  );
   fs.copyFileSync(
     path.join(sourceRepositoryRoot, 'workflow/ai-adapter-policy.json'),
     path.join(repository, 'workflow/ai-adapter-policy.json'),

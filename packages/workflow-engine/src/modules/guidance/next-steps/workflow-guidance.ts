@@ -1,33 +1,20 @@
 import type { WorkflowError } from '../../../foundation/errors/errors.ts';
-
-export type WorkflowGuidanceStatus =
-  'preferred' | 'compatible' | 'deprecated' | 'read-only' | 'recovery';
-
-export type WorkflowCommandDeprecation = Readonly<{
-  phase: 1;
-  replacementCommandId: string;
-  replacement: string;
-  reason: string;
-}>;
-
-export type WorkflowCommandGuidance = Readonly<{
-  id: string;
-  usage: readonly string[];
-  status: WorkflowGuidanceStatus;
-  purpose: string;
-  preconditions: readonly string[];
-  consequences: readonly string[];
-  successors: readonly string[];
-  deprecation?: WorkflowCommandDeprecation;
-}>;
-
-export type WorkflowGuidanceCatalog = Readonly<{
-  schemaVersion: 1;
-  kind: 'workflow-command-guide.v1';
-  catalogVersion: 'managed-task-lifecycle.v2';
-  authority: 'advisory';
-  commands: readonly WorkflowCommandGuidance[];
-}>;
+import type {
+  ManagedAuthorityPlanState,
+  ManagedTaskDiffReviewState,
+  ManagedTaskStrategyState,
+} from '../../lifecycle/managed-workflow-state-contract.ts';
+import {
+  managedWorkflowCommandUsageLines,
+  renderManagedWorkflowGuidanceCatalog,
+  resolveManagedWorkflowCommand,
+} from '../catalog/managed-workflow-command-registry.ts';
+export type {
+  WorkflowCommandDeprecation,
+  WorkflowCommandGuidance,
+  WorkflowGuidanceCatalog,
+  WorkflowGuidanceStatus,
+} from '../catalog/managed-workflow-command-registry.ts';
 
 export type WorkflowNextStep = Readonly<{
   command: string;
@@ -41,306 +28,85 @@ export type WorkflowNextStepBindings = Readonly<{
   investigationOrTaskId?: string;
 }>;
 
-const FINALIZE_REPLACEMENT =
-  'pnpm workflow finalize <session-id> --message <subject> [--full-gate] [--json]';
-const OPEN_TASK_REPLACEMENT =
-  'pnpm workflow open-task <change-id> [--task <task-id>] [--mandate <mandate-task-id>] [--json]';
+type TaskStrategyGuidanceKind =
+  | 'resume'
+  | 'waiting'
+  | 'retry'
+  | 'grant-required'
+  | 'exhausted'
+  | 'task-complete'
+  | 'status-only';
 
-const commands: WorkflowCommandGuidance[] = [
-  command({
-    id: 'guide',
-    usage: ['pnpm workflow guide [--json]'],
-    status: 'read-only',
-    purpose: 'Inspect the versioned managed-task workflow command guide.',
-    preconditions: [],
-    consequences: ['Reads command guidance without changing repository state.'],
-    successors: [],
-  }),
-  command({
-    id: 'open-task',
-    usage: [OPEN_TASK_REPLACEMENT],
-    status: 'preferred',
-    purpose:
-      'Open the selected or next incomplete task, committing an owned draft only when required.',
-    preconditions: [
-      'The branch and either owned draft or replayable planning generation are current; a protected task scope requires an exact active Task Mandate.',
-    ],
-    consequences: [
-      'Selects the planning-state transition and activates one exact task session.',
-    ],
-    successors: ['status', 'check', 'finalize'],
-  }),
-  command({
-    id: 'start',
-    usage: [
-      'pnpm workflow start <change-id> --task <task-id> [--mandate <mandate-task-id>] [--json]',
-    ],
-    status: 'deprecated',
-    purpose: 'Compatibility alias for opening an already committed plan.',
-    preconditions: [
-      'The exact planning transition is committed; a protected task scope requires an exact active Task Mandate.',
-    ],
-    consequences: ['Activates one exact task session and its lifecycle lock.'],
-    successors: ['status', 'check', 'finalize'],
-    deprecation: {
-      phase: 1,
-      replacementCommandId: 'open-task',
-      replacement: OPEN_TASK_REPLACEMENT,
-      reason:
-        'open-task selects the correct planning state; start remains a compatibility alias.',
-    },
-  }),
-  command({
-    id: 'revise-task',
-    usage: ['pnpm workflow revise-task <session-id> --reason <text> [--json]'],
-    status: 'preferred',
-    purpose: 'Prepare a reviewed planning-only revision of one active task.',
-    preconditions: ['The session can enter its revision transaction.'],
-    consequences: [
-      'Preserves implementation bytes while recording an exact revision transaction.',
-    ],
-    successors: ['status', 'resume-task'],
-  }),
-  command({
-    id: 'resume-task',
-    usage: [
-      'pnpm workflow resume-task <session-id> [--approval <approval-id>] [--json]',
-    ],
-    status: 'preferred',
-    purpose:
-      'Resume the exact durable task revision without replaying ceremony.',
-    preconditions: [
-      'The supplied approval, when required, matches the revision.',
-    ],
-    consequences: [
-      'Advances only the exact persisted revision and preserves same-digest evidence.',
-    ],
-    successors: ['status', 'check', 'finalize'],
-  }),
-  command({
-    id: 'resume',
-    usage: [
-      'pnpm workflow resume <session-id> [--actor <provider>] [--grant <grant-id>] [--input <typed-envelope.json>] [--json]',
-    ],
-    status: 'preferred',
-    purpose: 'Resume the next exact durable implementation-strategy substate.',
-    preconditions: [
-      'The active task and any collaboration grant or typed RED-revision input match the current strategy subject.',
-    ],
-    consequences: [
-      'Seals, schedules, or reconciles only the next persisted strategy transition.',
-    ],
-    successors: ['status'],
-  }),
-  command({
-    id: 'status',
-    usage: ['pnpm workflow status [investigation-or-task-id] [--json]'],
-    status: 'read-only',
-    purpose: 'Inspect durable investigation, task, and recovery state.',
-    preconditions: [],
-    consequences: ['Reads state without advancing a transaction.'],
-    successors: [],
-  }),
-  command({
-    id: 'check',
-    usage: ['pnpm workflow check <session-id> [--json]'],
-    status: 'compatible',
-    purpose: 'Produce current check evidence for the compatible task path.',
-    preconditions: ['The session and its task scope are current.'],
-    consequences: ['Persists check evidence bound to the exact current diff.'],
-    successors: ['complete-task', 'finalize'],
-  }),
-  command({
-    id: 'complete-task',
-    usage: ['pnpm workflow complete-task <session-id> [--json]'],
-    status: 'compatible',
-    purpose: 'Apply the compatible task and document completion projection.',
-    preconditions: [
-      'Current passing check evidence exists and the actual diff does not require protected Apply authority.',
-    ],
-    consequences: ['Projects completion but does not stage or commit it.'],
-    successors: ['finish', 'rollback-completion'],
-  }),
-  command({
-    id: 'finish',
-    usage: ['pnpm workflow finish <session-id> [--json]'],
-    status: 'compatible',
-    purpose: 'Check and stage the compatible exact completion tree.',
-    preconditions: [
-      'The completion projection and its review gates are current.',
-    ],
-    consequences: ['Stages the exact authorized tree without committing it.'],
-    successors: ['commit'],
-  }),
-  command({
-    id: 'review-diff',
-    usage: [
-      'pnpm workflow review-diff <session-id> [--actor <provider>] [--grant <grant-id>] [--json]',
-      'pnpm workflow review-diff <session-id> --input <typed-envelope.json> [--grant <grant-id>] [--json]',
-      'pnpm workflow review-diff <inspect|status|reconcile> <session-id> [--json]',
-    ],
-    status: 'preferred',
-    purpose: 'Inspect, run, or reconcile the exact required TaskDiff review.',
-    preconditions: [
-      'The review subject and any collaboration grant match the current candidate.',
-    ],
-    consequences: [
-      'Records advisory review output; only the shared closure verifier can authorize challenge closure.',
-    ],
-    successors: ['status', 'finalize'],
-  }),
-  command({
-    id: 'maintainer-review-diff-attest',
-    usage: [
-      'pnpm workflow maintainer review-diff-attest <session-id> --input <typed-envelope.json> --grant <grant-id> [--json]',
-    ],
-    status: 'recovery',
-    purpose:
-      'Sign and resume one exact durable direct-human TaskDiff review pause at the controlling maintainer terminal.',
-    preconditions: [
-      'The typed authority-free input, grant, and persisted content reference exactly match the current direct-human pause.',
-    ],
-    consequences: [
-      'Creates the attestation internally and resumes only the already-persisted review transaction.',
-    ],
-    successors: ['review-diff', 'status'],
-  }),
-  command({
-    id: 'authority-plan',
-    usage: [
-      'pnpm workflow authority-plan prepare --intent <intent.json> [--json]',
-      'pnpm workflow authority-plan status <plan-id> [--json]',
-      'pnpm workflow authority-plan approve-and-apply <plan-id> [--json]',
-      'pnpm workflow authority-plan resume <plan-id> [--json]',
-      'pnpm workflow authority-plan attest <plan-id> [--json]',
-    ],
-    status: 'preferred',
-    purpose:
-      'Prepare, inspect, and resume one durable whole-round authority transaction while keeping signing, push, and merge human-controlled.',
-    preconditions: [
-      'Prepare receives an exact authority intent on the matching clean work branch; approve and attest run only at the controlling maintainer terminal.',
-    ],
-    consequences: [
-      'Persists each local ceremony, remote handoff, merge observation, attestation, and terminal completion as an immutable authority-plan revision.',
-    ],
-    successors: [],
-  }),
-  command({
-    id: 'finalize',
-    usage: [FINALIZE_REPLACEMENT],
-    status: 'preferred',
-    purpose:
-      'Check, project, stage, and commit one exact ordinary candidate tree.',
-    preconditions: [
-      'The session, strategy evidence, reconciliation, and TaskDiff review gate are current.',
-      'The actual implementation diff contains no protected or unclassified path; otherwise use the returned human-only V2 Apply recovery.',
-    ],
-    consequences: [
-      'Runs targeted task checks; when the change closes (or escalation is explicit), terminal policy replaces only declared covered checks and commits the exact checked tree.',
-    ],
-    successors: ['status'],
-  }),
-  command({
-    id: 'finalize-recover',
-    usage: [
-      'pnpm workflow finalize-recover <session-id> [--cancel <transaction-id> --reason <text>] [--json]',
-    ],
-    status: 'recovery',
-    purpose:
-      'Resume or explicitly cancel one exact durable finalize transaction.',
-    preconditions: [
-      "The requested transaction is the session's exact active journal.",
-    ],
-    consequences: [
-      'Reconciles only the persisted transaction phase and never invents a replacement.',
-    ],
-    successors: ['status', 'finalize'],
-  }),
-  command({
-    id: 'finalize-task',
-    usage: ['pnpm workflow finalize-task <session-id> [--json]'],
-    status: 'deprecated',
-    purpose:
-      'Compatibility surface for the projected-finalize transaction without commit.',
-    preconditions: [
-      'The session satisfies the same gates as the preferred finalize command.',
-      'The actual implementation diff does not require protected Apply authority.',
-    ],
-    consequences: [
-      'Runs the same durable projected-finalize transaction and leaves commit separate.',
-    ],
-    successors: ['commit'],
-    deprecation: {
-      phase: 1,
-      replacementCommandId: 'finalize',
-      replacement: FINALIZE_REPLACEMENT,
-      reason:
-        'New callers use one durable finalization and commit transaction; finalize-task remains a compatibility surface.',
-    },
-  }),
-  command({
-    id: 'rollback-completion',
-    usage: [
-      'pnpm workflow rollback-completion <session-id> --reason <text> [--json]',
-    ],
-    status: 'recovery',
-    purpose: 'Restore an uncommitted compatible completion projection.',
-    preconditions: [
-      'The session has a completion projection but is not finished.',
-    ],
-    consequences: [
-      'Restores exact projection bytes and records the rollback reason.',
-    ],
-    successors: ['status', 'check', 'finalize'],
-  }),
-  command({
-    id: 'commit',
-    usage: ['pnpm workflow commit <session-id> --message <subject> [--json]'],
-    status: 'compatible',
-    purpose:
-      'Commit an exact tree already staged by a compatible lifecycle path.',
-    preconditions: [
-      'The staged tree and finish evidence are exact and current.',
-    ],
-    consequences: [
-      'Creates the managed task commit with engine-owned trailers.',
-    ],
-    successors: ['status'],
-  }),
-  command({
-    id: 'abort',
-    usage: ['pnpm workflow abort <session-id> --reason <text> [--json]'],
-    status: 'preferred',
-    purpose:
-      'Abandon an active pre-completion session without discarding files.',
-    preconditions: ['The session has not completed, finished, or committed.'],
-    consequences: ['Records abandonment and releases the lifecycle lock.'],
-    successors: ['status'],
-  }),
-];
+const TASK_STRATEGY_STATE_GUIDANCE = {
+  'not-required': 'task-complete',
+  'session-terminal': 'status-only',
+  'transformation-required': 'resume',
+  'transformation-produced': 'task-complete',
+  'red-authoring': 'resume',
+  'implementation-required': 'resume',
+  ready: 'resume',
+  'reservation-persisted': 'resume',
+  'collaboration-grant-required': 'grant-required',
+  'waiting-for-provider': 'waiting',
+  'provider-succeeded-awaiting-import': 'resume',
+  'provider-failed': 'retry',
+  'correction-required': 'resume',
+  'correction-exhausted': 'exhausted',
+  'caller-supplied-awaiting-import': 'resume',
+  'patch-imported': 'task-complete',
+} as const satisfies Record<ManagedTaskStrategyState, TaskStrategyGuidanceKind>;
 
-assertCatalog(commands);
+type TaskDiffReviewGuidanceKind =
+  | 'satisfied'
+  | 'default'
+  | 'direct-human'
+  | 'reconcile'
+  | 'external-grant'
+  | 'waiting'
+  | 'inspect';
 
-export const WORKFLOW_GUIDANCE_CATALOG: WorkflowGuidanceCatalog = Object.freeze(
-  {
-    schemaVersion: 1,
-    kind: 'workflow-command-guide.v1',
-    catalogVersion: 'managed-task-lifecycle.v2',
-    authority: 'advisory',
-    commands: Object.freeze(commands),
-  },
-);
+const TASK_DIFF_REVIEW_STATE_GUIDANCE = {
+  'not-required': 'satisfied',
+  ready: 'default',
+  'collaboration-grant-required': 'waiting',
+  'external-grant-resume-required': 'external-grant',
+  'direct-human-attestation-required': 'direct-human',
+  'external-reconciliation-required': 'waiting',
+  satisfied: 'satisfied',
+  'challenge-response-required': 'inspect',
+  'challenge-closure-required': 'waiting',
+  'changes-required': 'waiting',
+  'waiting-for-provider': 'waiting',
+  'provider-succeeded-awaiting-reconciliation': 'reconcile',
+  'provider-failed': 'waiting',
+} as const satisfies Record<
+  ManagedTaskDiffReviewState,
+  TaskDiffReviewGuidanceKind
+>;
 
-export function workflowCommandGuidance(id: string): WorkflowCommandGuidance {
-  const entry = WORKFLOW_GUIDANCE_CATALOG.commands.find(
-    (candidate) => candidate.id === id,
-  );
-  if (!entry) throw new Error(`Unknown workflow guidance command: ${id}`);
-  return entry;
+type AuthorityPlanGuidanceKind =
+  'approve' | 'resume-publication' | 'attest' | 'status-only';
+
+const AUTHORITY_PLAN_STATE_GUIDANCE = {
+  prepared: 'approve',
+  'applying-local': 'approve',
+  'local-applied': 'resume-publication',
+  'awaiting-attestation': 'attest',
+  'attestation-issued': 'resume-publication',
+  completed: 'status-only',
+} as const satisfies Record<
+  ManagedAuthorityPlanState,
+  AuthorityPlanGuidanceKind
+>;
+
+export const WORKFLOW_GUIDANCE_CATALOG = renderManagedWorkflowGuidanceCatalog();
+
+export function workflowCommandGuidance(id: string) {
+  return resolveManagedWorkflowCommand(id);
 }
 
 export function workflowGuidanceUsageLines(): readonly string[] {
-  return WORKFLOW_GUIDANCE_CATALOG.commands.flatMap(({ usage }) => usage);
+  return managedWorkflowCommandUsageLines();
 }
 
 export function projectWorkflowNextSteps(
@@ -392,12 +158,13 @@ function authorityPlanNextSteps(
 ): readonly WorkflowNextStep[] {
   const planId = stringField(plan, 'planId');
   const state = stringField(plan, 'state');
+  const guidance = stateGuidance(AUTHORITY_PLAN_STATE_GUIDANCE, state);
   if (planId === undefined) return projectWorkflowNextSteps(['guide']);
   const status = explicitNextStep(
     'authority-plan',
     `pnpm workflow authority-plan status ${shellQuote(planId)} --json`,
   );
-  if (state === 'prepared' || state === 'applying-local') {
+  if (guidance === 'approve') {
     return limitNextSteps([
       explicitNextStep(
         'authority-plan',
@@ -406,7 +173,7 @@ function authorityPlanNextSteps(
       status,
     ]);
   }
-  if (state === 'local-applied') {
+  if (guidance === 'resume-publication' && state === 'local-applied') {
     const publishCommand = stringField(
       record(plan?.localApplication),
       'publishCommand',
@@ -422,7 +189,7 @@ function authorityPlanNextSteps(
       status,
     ]);
   }
-  if (state === 'awaiting-attestation') {
+  if (guidance === 'attest') {
     return limitNextSteps([
       explicitNextStep(
         'authority-plan',
@@ -431,7 +198,7 @@ function authorityPlanNextSteps(
       status,
     ]);
   }
-  if (state === 'attestation-issued') {
+  if (guidance === 'resume-publication' && state === 'attestation-issued') {
     const publishCommand = stringField(
       record(plan?.attestation),
       'publishCommand',
@@ -536,29 +303,20 @@ function taskStrategyNextSteps(
   bindings: WorkflowNextStepBindings,
 ): readonly WorkflowNextStep[] {
   const state = stringField(strategy, 'state');
-  if (
-    [
-      'red-authoring',
-      'implementation-required',
-      'ready',
-      'reservation-persisted',
-      'provider-succeeded-awaiting-import',
-      'caller-supplied-awaiting-import',
-      'transformation-required',
-    ].includes(state ?? '')
-  ) {
+  const guidance = stateGuidance(TASK_STRATEGY_STATE_GUIDANCE, state);
+  if (guidance === 'resume') {
     return projectWorkflowNextSteps(['resume', 'status'], bindings);
   }
-  if (state === 'waiting-for-provider') {
+  if (guidance === 'waiting') {
     return projectWorkflowNextSteps(['status', 'resume'], bindings);
   }
-  if (state === 'provider-failed') {
+  if (guidance === 'retry') {
     return projectWorkflowNextSteps(['resume', 'status', 'guide'], bindings);
   }
-  if (state === 'collaboration-grant-required') {
+  if (guidance === 'grant-required') {
     return projectWorkflowNextSteps(['status', 'guide'], bindings);
   }
-  if (state === 'correction-exhausted') {
+  if (guidance === 'exhausted') {
     if (bindings.sessionId === undefined) {
       return projectWorkflowNextSteps(['status', 'guide'], bindings);
     }
@@ -571,11 +329,7 @@ function taskStrategyNextSteps(
       nextStep('guide', bindings),
     ]);
   }
-  if (
-    state === 'patch-imported' ||
-    state === 'transformation-produced' ||
-    state === 'not-required'
-  ) {
+  if (guidance === 'task-complete') {
     return projectWorkflowNextSteps(['check', 'finalize', 'status'], bindings);
   }
   return projectWorkflowNextSteps(['status'], bindings);
@@ -608,7 +362,8 @@ function taskDiffReviewNextSteps(
   );
   const generalStatus = nextStep('status', bindings);
   const state = stringField(reviewResult, 'state');
-  if (state === 'direct-human-attestation-required') {
+  const guidance = stateGuidance(TASK_DIFF_REVIEW_STATE_GUIDANCE, state);
+  if (guidance === 'direct-human') {
     const grantId = stringField(reviewResult, 'grantId');
     const inputPath = invocationOptionValue(invocation, '--input');
     if (grantId !== undefined && inputPath !== undefined) {
@@ -622,7 +377,7 @@ function taskDiffReviewNextSteps(
       ]);
     }
   }
-  if (state === 'provider-succeeded-awaiting-reconciliation') {
+  if (guidance === 'reconcile') {
     return limitNextSteps([
       explicitNextStep(
         'review-diff',
@@ -632,7 +387,7 @@ function taskDiffReviewNextSteps(
       generalStatus,
     ]);
   }
-  if (state === 'external-grant-resume-required') {
+  if (guidance === 'external-grant') {
     const grantId = stringField(reviewResult, 'grantId');
     if (grantId !== undefined) {
       return limitNextSteps([
@@ -645,18 +400,10 @@ function taskDiffReviewNextSteps(
       ]);
     }
   }
-  if (
-    state === 'waiting-for-provider' ||
-    state === 'provider-failed' ||
-    state === 'collaboration-grant-required' ||
-    state === 'direct-human-attestation-required' ||
-    state === 'external-reconciliation-required' ||
-    state === 'challenge-closure-required' ||
-    state === 'changes-required'
-  ) {
+  if (guidance === 'waiting' || guidance === 'direct-human') {
     return limitNextSteps([reviewStatus, generalStatus, nextStep('guide', {})]);
   }
-  if (state === 'challenge-response-required') {
+  if (guidance === 'inspect') {
     return limitNextSteps([
       explicitNextStep(
         'review-diff',
@@ -844,45 +591,17 @@ function stringField(
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
+function stateGuidance<const T extends Readonly<Record<string, string>>>(
+  projection: T,
+  state: string | undefined,
+): T[keyof T] | null {
+  return state !== undefined && Object.hasOwn(projection, state)
+    ? projection[state as keyof T]
+    : null;
+}
+
 function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Readonly<Record<string, unknown>>)
     : undefined;
-}
-
-function command(value: WorkflowCommandGuidance): WorkflowCommandGuidance {
-  return Object.freeze({
-    ...value,
-    usage: Object.freeze([...value.usage]),
-    preconditions: Object.freeze([...value.preconditions]),
-    consequences: Object.freeze([...value.consequences]),
-    successors: Object.freeze([...value.successors]),
-    ...(value.deprecation
-      ? { deprecation: Object.freeze({ ...value.deprecation }) }
-      : {}),
-  });
-}
-
-function assertCatalog(entries: readonly WorkflowCommandGuidance[]): void {
-  const ids = entries.map(({ id }) => id);
-  if (new Set(ids).size !== ids.length) {
-    throw new Error('Workflow guidance command IDs must be unique.');
-  }
-  const usage = entries.flatMap((entry) => entry.usage);
-  if (new Set(usage).size !== usage.length) {
-    throw new Error('Workflow guidance usage lines must be unique.');
-  }
-  for (const entry of entries) {
-    if (
-      !entry.id ||
-      entry.usage.length === 0 ||
-      entry.usage.some((line) => !line.startsWith('pnpm workflow ')) ||
-      !entry.purpose ||
-      entry.consequences.length === 0 ||
-      entry.successors.some((id) => !ids.includes(id)) ||
-      (entry.status === 'deprecated') !== (entry.deprecation !== undefined)
-    ) {
-      throw new Error(`Workflow guidance entry is invalid: ${entry.id}`);
-    }
-  }
 }

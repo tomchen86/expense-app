@@ -16,6 +16,7 @@ test('planning paths accept only the exact named OpenSpec planning grammar', () 
       'openspec/changes/demo-change/proposal.md',
       'openspec/changes/demo-change/specs/demo/spec.md',
       'openspec/changes/demo-change/tasks.md',
+      'workflow/change-providers/demo-change.json',
     ]),
   );
 
@@ -27,6 +28,8 @@ test('planning paths accept only the exact named OpenSpec planning grammar', () 
     'openspec/changes/demo-change/README.md',
     'openspec/changes/demo-change/specs/demo/notes.md',
     'openspec/changes/demo-change/specs/spec.md',
+    'workflow/change-providers/other-change.json',
+    'workflow/agent-plans/demo-change.json',
   ]) {
     assert.throws(
       () =>

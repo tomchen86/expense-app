@@ -5,7 +5,10 @@ import { verifyArchiveDeltaOutcomes } from '../../runtime/repository-transaction
 import { preEpochCompletedTaskIds } from '../../adapters/compatibility/investigation-v2/bootstrap-task-exemption.ts';
 import { assertUniqueCollaborationGrantUses } from '../../modules/authority/collaboration-grant.ts';
 import { canonicalCheckDefinition } from './ci-historical-contract.ts';
-import { collectHistoricalCollaborationGrantUses } from './ci-planning.ts';
+import {
+  collectHistoricalCollaborationGrantUses,
+  resolveHistoricalPlanningProviderForCi,
+} from './ci-planning.ts';
 import {
   assertArchiveReplayContent,
   inspectArchiveCommitTree,
@@ -89,6 +92,12 @@ export function validateCiArchiveCommit(
     config.changeRoot,
     changeId,
     changedPaths,
+  );
+  resolveHistoricalPlanningProviderForCi(
+    repositoryRoot,
+    parent,
+    config.changeRoot,
+    changeId,
   );
 
   const installation = resolveOpenSpecInstallation(repositoryRoot);

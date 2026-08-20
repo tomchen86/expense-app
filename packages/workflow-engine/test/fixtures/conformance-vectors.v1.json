@@ -1,0 +1,369 @@
+{
+  "kind": "workflow.conformance-vectors.v1",
+  "schemaVersion": 1,
+  "algorithms": {
+    "canonicalJson": "ecmascript-json-utf16-key-order.v1",
+    "collaborationGrants": "collaboration-grant-versioned-envelope.v1",
+    "evidenceNodes": "evidence-node-identity-and-result.v1",
+    "managedMessages": "landed-managed-git-message-renderers.v1",
+    "sha256": "sha256-utf8-lowerhex.v1",
+    "managedTrailers": "managed-git-trailer-block.v1"
+  },
+  "canonicalJson": [
+    {
+      "id": "primitives-and-array-order",
+      "input": [null, true, false, 0, 0, 1.25],
+      "canonical": "[null,true,false,0,0,1.25]",
+      "sha256": "c9805a7cf1bc89624531145fabd3da94123465fe813aac7208939b32673f7cf0"
+    },
+    {
+      "id": "recursive-object-order",
+      "input": {
+        "z": [3, { "b": true, "a": null }],
+        "a": "line\n\"quoted\""
+      },
+      "canonical": "{\"a\":\"line\\n\\\"quoted\\\"\",\"z\":[3,{\"a\":null,\"b\":true}]}",
+      "sha256": "3e89dc2bc1b5dd321423dad5966dec3a4f932580a24fafc7a3c2a732d840387f"
+    },
+    {
+      "id": "utf16-key-order",
+      "input": {
+        "": "private-use",
+        "😀": "astral",
+        "A": "ascii"
+      },
+      "canonical": "{\"A\":\"ascii\",\"😀\":\"astral\",\"\":\"private-use\"}",
+      "sha256": "1fb615f3cef0024a89c784c7e008bc24028a94a7ee05d7db1a328f885870096f"
+    },
+    {
+      "id": "json-string-escaping",
+      "input": {
+        "value": "tab\tline\nquote\"slash\\control\u0001"
+      },
+      "canonical": "{\"value\":\"tab\\tline\\nquote\\\"slash\\\\control\\u0001\"}",
+      "sha256": "3955fb325b6a474f765c68c4b2d304f27167c1cc703db70959cb6753b8478b1f"
+    }
+  ],
+  "sha256": [
+    {
+      "id": "empty-utf8",
+      "utf8": "",
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "trailing-newline",
+      "utf8": "workflow\n",
+      "digest": "8d3fb39ce523c6fc1dafec39102aef44e599f72fc3a22cf4c95612234571a570"
+    },
+    {
+      "id": "unicode-utf8",
+      "utf8": "jigwright–工作流",
+      "digest": "6b554f847f16aa3b2045d06d8070a403dd019b88b807b0b38e6749cbaaca9c1d"
+    }
+  ],
+  "evidenceNodes": [
+    {
+      "id": "evidence-identity-and-result",
+      "input": {
+        "type": "plan-review",
+        "nodeSchema": "workflow.evidence-node.v1",
+        "evaluator": "vector-evaluator.v1",
+        "policyDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "exactInputDigests": {
+          "source": "2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        "semanticParentResultDigests": {
+          "prior": "3333333333333333333333333333333333333333333333333333333333333333"
+        },
+        "provenanceParentNodeIds": {
+          "survey": "4444444444444444444444444444444444444444444444444444444444444444"
+        },
+        "outputSchema": "workflow.vector-output.v1",
+        "output": {
+          "decision": "accepted",
+          "score": 1
+        },
+        "runtimeMetadata": {
+          "provider": "codex",
+          "elapsedMs": 12
+        }
+      },
+      "expected": {
+        "nodeId": "fa2215da5c1de37420ebfb03e28da4c1ef09ab5c5a4b5cb506a88682bb560837",
+        "resultDigest": "119c7bef791b23ee835308cc1a1602305a2fbd16e736dc2f9343fcaf7ae8a3d1",
+        "canonicalEnvelopeUtf8Base64": "eyJldmFsdWF0b3IiOiJ2ZWN0b3ItZXZhbHVhdG9yLnYxIiwiZXhhY3RJbnB1dERpZ2VzdHMiOnsic291cmNlIjoiMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMiJ9LCJub2RlSWQiOiJmYTIyMTVkYTVjMWRlMzc0MjBlYmZiMDNlMjhkYTRjMWVmMDlhYjVjNWE0YjVjYjUwNmE4ODY4MmJiNTYwODM3Iiwibm9kZVNjaGVtYSI6IndvcmtmbG93LmV2aWRlbmNlLW5vZGUudjEiLCJvdXRwdXQiOnsiZGVjaXNpb24iOiJhY2NlcHRlZCIsInNjb3JlIjoxfSwib3V0cHV0U2NoZW1hIjoid29ya2Zsb3cudmVjdG9yLW91dHB1dC52MSIsInBvbGljeURpZ2VzdCI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJwcm92ZW5hbmNlUGFyZW50Tm9kZUlkcyI6eyJzdXJ2ZXkiOiI0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0In0sInJlc3VsdERpZ2VzdCI6IjExOWM3YmVmNzkxYjIzZWU4MzUzMDhjYzFhMTYwMjMwNWEyZmJkMTZlNzM2ZGMyZjkzNDNmY2FmN2FlOGEzZDEiLCJydW50aW1lTWV0YWRhdGEiOnsiZWxhcHNlZE1zIjoxMiwicHJvdmlkZXIiOiJjb2RleCJ9LCJzZW1hbnRpY1BhcmVudFJlc3VsdERpZ2VzdHMiOnsicHJpb3IiOiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIn0sInR5cGUiOiJwbGFuLXJldmlldyJ9"
+      },
+      "mutations": {
+        "runtimeMetadata": {
+          "value": {
+            "provider": "claude",
+            "elapsedMs": 99
+          },
+          "nodeId": "fa2215da5c1de37420ebfb03e28da4c1ef09ab5c5a4b5cb506a88682bb560837",
+          "resultDigest": "119c7bef791b23ee835308cc1a1602305a2fbd16e736dc2f9343fcaf7ae8a3d1"
+        },
+        "output": {
+          "value": {
+            "decision": "rejected",
+            "score": 0
+          },
+          "nodeId": "fa2215da5c1de37420ebfb03e28da4c1ef09ab5c5a4b5cb506a88682bb560837",
+          "resultDigest": "27515519e3c5573c7d95377a307dc50fd0197cc7e07a1a22a433af08b1a42178"
+        },
+        "exactInputDigests": {
+          "value": {
+            "source": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          "nodeId": "ab662a2d1eb8b3097193c66001a42cd1d2f20009cdd470d7b7678cd7f79a0690",
+          "resultDigest": "119c7bef791b23ee835308cc1a1602305a2fbd16e736dc2f9343fcaf7ae8a3d1"
+        }
+      }
+    }
+  ],
+  "collaborationGrants": [
+    {
+      "id": "collaboration-grant-v1-legacy",
+      "contract": "collaboration-grant-v1",
+      "signatureNamespace": "expense-app.workflow.collaboration-grant.v1",
+      "fixtureVerifier": "sha256-namespace-nul-payload-base64-armored.v1",
+      "payload": {
+        "version": 1,
+        "grantId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "repositoryId": "github:R_fixture",
+        "repositoryOrigin": "https://github.com/example/fixture.git",
+        "policyBlob": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "collaborationPolicyDigest": "54e975127c38013dd04594ce9a35c8e1e1abb35478a29fd0582b9e1faaaf35d4",
+        "changeId": "vector-change",
+        "taskId": null,
+        "baselineCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baselineTree": "cccccccccccccccccccccccccccccccccccccccc",
+        "targetDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "lifecyclePhase": "blind-survey",
+        "rolePair": {
+          "authorRole": "investigation-author",
+          "conflictingRole": "blind-surveyor"
+        },
+        "availableActor": {
+          "kind": "provider",
+          "providerId": "codex",
+          "assurance": "runtime-hint"
+        },
+        "degradedForm": "same-provider-fresh-session",
+        "authorizedEffect": "role-independence-degradation-only",
+        "reason": "No alternate provider is callable for this exact vector.",
+        "issuedAt": "2026-07-24T00:00:00.000Z",
+        "expiresAt": "2026-07-24T00:30:00.000Z",
+        "maxUses": 1,
+        "signer": "fixture-maintainer"
+      },
+      "canonicalPayloadUtf8Base64": "eyJ2ZXJzaW9uIjoxLCJncmFudElkIjoiYWFhYWFhYWEtYWFhYS00YWFhLThhYWEtYWFhYWFhYWFhYWFhIiwicmVwb3NpdG9yeUlkIjoiZ2l0aHViOlJfZml4dHVyZSIsInJlcG9zaXRvcnlPcmlnaW4iOiJodHRwczovL2dpdGh1Yi5jb20vZXhhbXBsZS9maXh0dXJlLmdpdCIsInBvbGljeUJsb2IiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiY29sbGFib3JhdGlvblBvbGljeURpZ2VzdCI6IjU0ZTk3NTEyN2MzODAxM2RkMDQ1OTRjZTlhMzVjOGUxZTFhYmIzNTQ3OGEyOWZkMDU4MmI5ZTFmYWFhZjM1ZDQiLCJjaGFuZ2VJZCI6InZlY3Rvci1jaGFuZ2UiLCJ0YXNrSWQiOm51bGwsImJhc2VsaW5lQ29tbWl0IjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsImJhc2VsaW5lVHJlZSI6ImNjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MiLCJ0YXJnZXREaWdlc3QiOiJkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkIiwibGlmZWN5Y2xlUGhhc2UiOiJibGluZC1zdXJ2ZXkiLCJyb2xlUGFpciI6eyJhdXRob3JSb2xlIjoiaW52ZXN0aWdhdGlvbi1hdXRob3IiLCJjb25mbGljdGluZ1JvbGUiOiJibGluZC1zdXJ2ZXlvciJ9LCJhdmFpbGFibGVBY3RvciI6eyJraW5kIjoicHJvdmlkZXIiLCJwcm92aWRlcklkIjoiY29kZXgiLCJhc3N1cmFuY2UiOiJydW50aW1lLWhpbnQifSwiZGVncmFkZWRGb3JtIjoic2FtZS1wcm92aWRlci1mcmVzaC1zZXNzaW9uIiwiYXV0aG9yaXplZEVmZmVjdCI6InJvbGUtaW5kZXBlbmRlbmNlLWRlZ3JhZGF0aW9uLW9ubHkiLCJyZWFzb24iOiJObyBhbHRlcm5hdGUgcHJvdmlkZXIgaXMgY2FsbGFibGUgZm9yIHRoaXMgZXhhY3QgdmVjdG9yLiIsImlzc3VlZEF0IjoiMjAyNi0wNy0yNFQwMDowMDowMC4wMDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0wNy0yNFQwMDozMDowMC4wMDBaIiwibWF4VXNlcyI6MSwic2lnbmVyIjoiZml4dHVyZS1tYWludGFpbmVyIn0K",
+      "signature": "-----BEGIN SSH SIGNATURE-----\nG8/ghocEGe0f1tY7zSGRp6LSwO4gOvVSIf5SHFI8R2c=\n-----END SSH SIGNATURE-----\n",
+      "canonicalEnvelopeUtf8Base64": "eyJwYXlsb2FkIjp7InZlcnNpb24iOjEsImdyYW50SWQiOiJhYWFhYWFhYS1hYWFhLTRhYWEtOGFhYS1hYWFhYWFhYWFhYWEiLCJyZXBvc2l0b3J5SWQiOiJnaXRodWI6Ul9maXh0dXJlIiwicmVwb3NpdG9yeU9yaWdpbiI6Imh0dHBzOi8vZ2l0aHViLmNvbS9leGFtcGxlL2ZpeHR1cmUuZ2l0IiwicG9saWN5QmxvYiI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJjb2xsYWJvcmF0aW9uUG9saWN5RGlnZXN0IjoiNTRlOTc1MTI3YzM4MDEzZGQwNDU5NGNlOWEzNWM4ZTFlMWFiYjM1NDc4YTI5ZmQwNTgyYjllMWZhYWFmMzVkNCIsImNoYW5nZUlkIjoidmVjdG9yLWNoYW5nZSIsInRhc2tJZCI6bnVsbCwiYmFzZWxpbmVDb21taXQiOiJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIiwiYmFzZWxpbmVUcmVlIjoiY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjYyIsInRhcmdldERpZ2VzdCI6ImRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQiLCJsaWZlY3ljbGVQaGFzZSI6ImJsaW5kLXN1cnZleSIsInJvbGVQYWlyIjp7ImF1dGhvclJvbGUiOiJpbnZlc3RpZ2F0aW9uLWF1dGhvciIsImNvbmZsaWN0aW5nUm9sZSI6ImJsaW5kLXN1cnZleW9yIn0sImF2YWlsYWJsZUFjdG9yIjp7ImtpbmQiOiJwcm92aWRlciIsInByb3ZpZGVySWQiOiJjb2RleCIsImFzc3VyYW5jZSI6InJ1bnRpbWUtaGludCJ9LCJkZWdyYWRlZEZvcm0iOiJzYW1lLXByb3ZpZGVyLWZyZXNoLXNlc3Npb24iLCJhdXRob3JpemVkRWZmZWN0Ijoicm9sZS1pbmRlcGVuZGVuY2UtZGVncmFkYXRpb24tb25seSIsInJlYXNvbiI6Ik5vIGFsdGVybmF0ZSBwcm92aWRlciBpcyBjYWxsYWJsZSBmb3IgdGhpcyBleGFjdCB2ZWN0b3IuIiwiaXNzdWVkQXQiOiIyMDI2LTA3LTI0VDAwOjAwOjAwLjAwMFoiLCJleHBpcmVzQXQiOiIyMDI2LTA3LTI0VDAwOjMwOjAwLjAwMFoiLCJtYXhVc2VzIjoxLCJzaWduZXIiOiJmaXh0dXJlLW1haW50YWluZXIifSwic2lnbmF0dXJlIjoiLS0tLS1CRUdJTiBTU0ggU0lHTkFUVVJFLS0tLS1cbkc4L2dob2NFR2UwZjF0WTd6U0dScDZMU3dPNGdPdlZTSWY1U0hGSThSMmM9XG4tLS0tLUVORCBTU0ggU0lHTkFUVVJFLS0tLS1cbiJ9Cg==",
+      "envelopeSha256": "8082ee9e05f99d2ea666d1eedd219e84d7ae82ce2a0c365ad2ad3d7e1c3c34de"
+    },
+    {
+      "id": "collaboration-grant-v2-neutral",
+      "contract": "collaboration-grant-v2-namespace",
+      "signatureNamespace": "workflow.collaboration-grant.v2",
+      "fixtureVerifier": "sha256-namespace-nul-payload-base64-armored.v1",
+      "payload": {
+        "version": 2,
+        "signatureNamespace": "workflow.collaboration-grant.v2",
+        "grantId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "repositoryId": "github:R_fixture",
+        "repositoryOrigin": "https://github.com/example/fixture.git",
+        "policyBlob": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "collaborationPolicyDigest": "54e975127c38013dd04594ce9a35c8e1e1abb35478a29fd0582b9e1faaaf35d4",
+        "changeId": "vector-change",
+        "taskId": null,
+        "baselineCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baselineTree": "cccccccccccccccccccccccccccccccccccccccc",
+        "targetDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "lifecyclePhase": "blind-survey",
+        "rolePair": {
+          "authorRole": "investigation-author",
+          "conflictingRole": "blind-surveyor"
+        },
+        "availableActor": {
+          "kind": "provider",
+          "providerId": "codex",
+          "assurance": "runtime-hint"
+        },
+        "degradedForm": "same-provider-fresh-session",
+        "authorizedEffect": "role-independence-degradation-only",
+        "reason": "No alternate provider is callable for this exact vector.",
+        "issuedAt": "2026-07-24T00:00:00.000Z",
+        "expiresAt": "2026-07-24T00:30:00.000Z",
+        "maxUses": 1,
+        "signer": "fixture-maintainer"
+      },
+      "canonicalPayloadUtf8Base64": "eyJ2ZXJzaW9uIjoyLCJzaWduYXR1cmVOYW1lc3BhY2UiOiJ3b3JrZmxvdy5jb2xsYWJvcmF0aW9uLWdyYW50LnYyIiwiZ3JhbnRJZCI6ImFhYWFhYWFhLWFhYWEtNGFhYS04YWFhLWFhYWFhYWFhYWFhYSIsInJlcG9zaXRvcnlJZCI6ImdpdGh1YjpSX2ZpeHR1cmUiLCJyZXBvc2l0b3J5T3JpZ2luIjoiaHR0cHM6Ly9naXRodWIuY29tL2V4YW1wbGUvZml4dHVyZS5naXQiLCJwb2xpY3lCbG9iIjoiYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSIsImNvbGxhYm9yYXRpb25Qb2xpY3lEaWdlc3QiOiI1NGU5NzUxMjdjMzgwMTNkZDA0NTk0Y2U5YTM1YzhlMWUxYWJiMzU0NzhhMjlmZDA1ODJiOWUxZmFhYWYzNWQ0IiwiY2hhbmdlSWQiOiJ2ZWN0b3ItY2hhbmdlIiwidGFza0lkIjpudWxsLCJiYXNlbGluZUNvbW1pdCI6ImJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIiLCJiYXNlbGluZVRyZWUiOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwidGFyZ2V0RGlnZXN0IjoiZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZCIsImxpZmVjeWNsZVBoYXNlIjoiYmxpbmQtc3VydmV5Iiwicm9sZVBhaXIiOnsiYXV0aG9yUm9sZSI6ImludmVzdGlnYXRpb24tYXV0aG9yIiwiY29uZmxpY3RpbmdSb2xlIjoiYmxpbmQtc3VydmV5b3IifSwiYXZhaWxhYmxlQWN0b3IiOnsia2luZCI6InByb3ZpZGVyIiwicHJvdmlkZXJJZCI6ImNvZGV4IiwiYXNzdXJhbmNlIjoicnVudGltZS1oaW50In0sImRlZ3JhZGVkRm9ybSI6InNhbWUtcHJvdmlkZXItZnJlc2gtc2Vzc2lvbiIsImF1dGhvcml6ZWRFZmZlY3QiOiJyb2xlLWluZGVwZW5kZW5jZS1kZWdyYWRhdGlvbi1vbmx5IiwicmVhc29uIjoiTm8gYWx0ZXJuYXRlIHByb3ZpZGVyIGlzIGNhbGxhYmxlIGZvciB0aGlzIGV4YWN0IHZlY3Rvci4iLCJpc3N1ZWRBdCI6IjIwMjYtMDctMjRUMDA6MDA6MDAuMDAwWiIsImV4cGlyZXNBdCI6IjIwMjYtMDctMjRUMDA6MzA6MDAuMDAwWiIsIm1heFVzZXMiOjEsInNpZ25lciI6ImZpeHR1cmUtbWFpbnRhaW5lciJ9Cg==",
+      "signature": "-----BEGIN SSH SIGNATURE-----\nZe+2hgE29aRQWczE4XITIf5YibVahHHPCB/LvUOr+JQ=\n-----END SSH SIGNATURE-----\n",
+      "canonicalEnvelopeUtf8Base64": "eyJwYXlsb2FkIjp7InZlcnNpb24iOjIsInNpZ25hdHVyZU5hbWVzcGFjZSI6IndvcmtmbG93LmNvbGxhYm9yYXRpb24tZ3JhbnQudjIiLCJncmFudElkIjoiYWFhYWFhYWEtYWFhYS00YWFhLThhYWEtYWFhYWFhYWFhYWFhIiwicmVwb3NpdG9yeUlkIjoiZ2l0aHViOlJfZml4dHVyZSIsInJlcG9zaXRvcnlPcmlnaW4iOiJodHRwczovL2dpdGh1Yi5jb20vZXhhbXBsZS9maXh0dXJlLmdpdCIsInBvbGljeUJsb2IiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiY29sbGFib3JhdGlvblBvbGljeURpZ2VzdCI6IjU0ZTk3NTEyN2MzODAxM2RkMDQ1OTRjZTlhMzVjOGUxZTFhYmIzNTQ3OGEyOWZkMDU4MmI5ZTFmYWFhZjM1ZDQiLCJjaGFuZ2VJZCI6InZlY3Rvci1jaGFuZ2UiLCJ0YXNrSWQiOm51bGwsImJhc2VsaW5lQ29tbWl0IjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsImJhc2VsaW5lVHJlZSI6ImNjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MiLCJ0YXJnZXREaWdlc3QiOiJkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkIiwibGlmZWN5Y2xlUGhhc2UiOiJibGluZC1zdXJ2ZXkiLCJyb2xlUGFpciI6eyJhdXRob3JSb2xlIjoiaW52ZXN0aWdhdGlvbi1hdXRob3IiLCJjb25mbGljdGluZ1JvbGUiOiJibGluZC1zdXJ2ZXlvciJ9LCJhdmFpbGFibGVBY3RvciI6eyJraW5kIjoicHJvdmlkZXIiLCJwcm92aWRlcklkIjoiY29kZXgiLCJhc3N1cmFuY2UiOiJydW50aW1lLWhpbnQifSwiZGVncmFkZWRGb3JtIjoic2FtZS1wcm92aWRlci1mcmVzaC1zZXNzaW9uIiwiYXV0aG9yaXplZEVmZmVjdCI6InJvbGUtaW5kZXBlbmRlbmNlLWRlZ3JhZGF0aW9uLW9ubHkiLCJyZWFzb24iOiJObyBhbHRlcm5hdGUgcHJvdmlkZXIgaXMgY2FsbGFibGUgZm9yIHRoaXMgZXhhY3QgdmVjdG9yLiIsImlzc3VlZEF0IjoiMjAyNi0wNy0yNFQwMDowMDowMC4wMDBaIiwiZXhwaXJlc0F0IjoiMjAyNi0wNy0yNFQwMDozMDowMC4wMDBaIiwibWF4VXNlcyI6MSwic2lnbmVyIjoiZml4dHVyZS1tYWludGFpbmVyIn0sInNpZ25hdHVyZSI6Ii0tLS0tQkVHSU4gU1NIIFNJR05BVFVSRS0tLS0tXG5aZSsyaGdFMjlhUlFXY3pFNFhJVElmNVlpYlZhaEhIUENCL0x2VU9yK0pRPVxuLS0tLS1FTkQgU1NIIFNJR05BVFVSRS0tLS0tXG4ifQo=",
+      "envelopeSha256": "7b0685c3750e64c53d48da15ef8b7823ad48a45675cd3b0bb613b442406fd3df"
+    }
+  ],
+  "managedMessages": [
+    {
+      "id": "render-task",
+      "renderer": "task",
+      "input": {
+        "subject": "Complete task",
+        "changeId": "demo-change",
+        "taskId": "1.2"
+      },
+      "message": "Complete task\n\nChange: demo-change\nTask: 1.2",
+      "parsed": {
+        "kind": "task",
+        "changeId": "demo-change",
+        "taskId": "1.2"
+      }
+    },
+    {
+      "id": "render-plan",
+      "renderer": "plan",
+      "input": {
+        "changeId": "demo-change"
+      },
+      "message": "Plan demo-change\n\nChange: demo-change\nTransition: plan",
+      "parsed": {
+        "kind": "plan",
+        "changeId": "demo-change",
+        "transition": "plan"
+      }
+    },
+    {
+      "id": "render-amend-plan",
+      "renderer": "amend-plan",
+      "input": {
+        "changeId": "demo-change",
+        "planningGeneration": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "amendsPlanningGeneration": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "executionImpact": "required",
+        "planReview": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "message": "Amend plan demo-change\n\nChange: demo-change\nTransition: amend-plan\nPlanning-Generation: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nAmends-Planning-Generation: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nExecution-Impact: required\nPlan-Review: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "parsed": {
+        "kind": "amend-plan",
+        "changeId": "demo-change",
+        "transition": "amend-plan",
+        "planningGeneration": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "amendsPlanningGeneration": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "executionImpact": "required",
+        "planReview": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    {
+      "id": "render-archive",
+      "renderer": "archive",
+      "input": {
+        "changeId": "demo-change"
+      },
+      "message": "Archive demo-change\n\nChange: demo-change\nTransition: archive",
+      "parsed": {
+        "kind": "archive",
+        "changeId": "demo-change",
+        "transition": "archive"
+      }
+    },
+    {
+      "id": "render-authority",
+      "renderer": "authority",
+      "input": {
+        "subject": "Repair authority",
+        "changeId": "demo-change",
+        "grantId": "11111111-1111-4111-8111-111111111111"
+      },
+      "message": "Repair authority\n\nChange: demo-change\nTransition: authority-maintenance\nGrant: 11111111-1111-4111-8111-111111111111",
+      "parsed": {
+        "kind": "authority",
+        "changeId": "demo-change",
+        "transition": "authority-maintenance",
+        "grantId": "11111111-1111-4111-8111-111111111111"
+      }
+    },
+    {
+      "id": "render-authority-candidate",
+      "renderer": "authority-candidate",
+      "input": {
+        "subject": "Freeze authority candidate",
+        "changeId": "demo-change"
+      },
+      "message": "Freeze authority candidate\n\nChange: demo-change\nTransition: authority-candidate",
+      "parsed": {
+        "kind": "authority-candidate",
+        "changeId": "demo-change",
+        "transition": "authority-candidate"
+      }
+    }
+  ],
+  "managedTrailers": [
+    {
+      "id": "task",
+      "message": "Complete task\n\nChange: demo-change\nTask: 1.2\n",
+      "outcome": {
+        "state": "parsed",
+        "value": {
+          "kind": "task",
+          "changeId": "demo-change",
+          "taskId": "1.2"
+        }
+      }
+    },
+    {
+      "id": "plan",
+      "message": "Plan demo-change\n\nChange: demo-change\nTransition: plan\n",
+      "outcome": {
+        "state": "parsed",
+        "value": {
+          "kind": "plan",
+          "changeId": "demo-change",
+          "transition": "plan"
+        }
+      }
+    },
+    {
+      "id": "authority",
+      "message": "Repair authority\n\nChange: demo-change\nTransition: authority-maintenance\nGrant: 11111111-1111-4111-8111-111111111111\n",
+      "outcome": {
+        "state": "parsed",
+        "value": {
+          "kind": "authority",
+          "changeId": "demo-change",
+          "transition": "authority-maintenance",
+          "grantId": "11111111-1111-4111-8111-111111111111"
+        }
+      }
+    },
+    {
+      "id": "amend-plan",
+      "message": "Amend plan\n\nChange: demo-change\nTransition: amend-plan\nPlanning-Generation: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nAmends-Planning-Generation: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\nExecution-Impact: required\nPlan-Review: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n",
+      "outcome": {
+        "state": "parsed",
+        "value": {
+          "kind": "amend-plan",
+          "changeId": "demo-change",
+          "transition": "amend-plan",
+          "planningGeneration": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "amendsPlanningGeneration": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "executionImpact": "required",
+          "planReview": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      }
+    },
+    {
+      "id": "ordinary-unmanaged",
+      "message": "Add ordinary behavior\n",
+      "outcome": { "state": "unmanaged" }
+    },
+    {
+      "id": "reserved-invalid-case",
+      "message": "Bad case\n\nchange: demo-change\nTask: 1.2\n",
+      "outcome": {
+        "state": "rejected",
+        "error": "ManagedTrailerSyntaxError"
+      }
+    }
+  ],
+  "vectorSetDigest": "sha256:a1c3bdc559b893e66aae14946006c34e00bf9b42361bfa39fcb6754edff9d136"
+}

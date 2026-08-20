@@ -15,10 +15,8 @@ import {
   ExitCode,
   workflowError,
 } from '../../../../foundation/errors/errors.ts';
-import {
-  createOpenSpecAdapter,
-  resolveOpenSpecInstallation,
-} from './openspec-adapter.ts';
+import { resolveOpenSpecInstallation } from './openspec-adapter.ts';
+import { createOpenSpecPlanningProviderPort } from './openspec-planning-provider.ts';
 import {
   inspectOpenSpecSchemaContract,
   type OpenSpecSchemaContract,
@@ -33,14 +31,17 @@ import {
   validateInvestigationFirstPlanningReadiness,
   type InvestigationFirstPlanningAssuranceSummary,
 } from '../../../../modules/assurance/planning-assurance-validator.ts';
+import { resolveCurrentOpenSpecProviderBinding } from './openspec-provider-binding.ts';
+import type {
+  PlanningProviderBindingReaderPort,
+  ResolvedPlanningProviderBinding,
+} from '../../../../modules/planning-provider/planning-provider-binding.ts';
+import {
+  evaluatePlanningProvider,
+  type PlanningProviderDiagnostic,
+} from '../../../../modules/planning-provider/planning-provider-port.ts';
 
-export type ManagedChangeDiagnostic = {
-  level: 'ERROR' | 'WARNING' | 'INFO';
-  path: string;
-  message: string;
-  line?: number;
-  column?: number;
-};
+export type ManagedChangeDiagnostic = PlanningProviderDiagnostic;
 
 export type ValidatedChangeContract = ChangeContract & {
   schemaName: ManagedSchemaName;
@@ -54,6 +55,7 @@ export type ValidatedChangeContract = ChangeContract & {
   artifactModes: Record<string, '100644' | '100755'>;
   contractDigest: string;
   planningAssurance: InvestigationFirstPlanningAssuranceSummary | null;
+  planningProvider: ResolvedPlanningProviderBinding;
 };
 
 type ContractSnapshot = {
@@ -63,15 +65,21 @@ type ContractSnapshot = {
   artifactPaths: string[];
   artifactDigests: Record<string, string>;
   artifactModes: Record<string, '100644' | '100755'>;
+  planningProvider: ResolvedPlanningProviderBinding;
   digest: string;
 };
 
 export function loadValidatedChangeContract(
   repositoryRoot: string,
   requestedChangeId: string,
+  planningProviderReader: PlanningProviderBindingReaderPort,
 ): ValidatedChangeContract {
   const root = canonicalRepositoryRoot(repositoryRoot);
-  const before = inspectSnapshot(root, requestedChangeId);
+  const before = inspectSnapshot(
+    root,
+    requestedChangeId,
+    planningProviderReader,
+  );
   if (
     before.schemaName === 'expense-app-v2' &&
     !before.contract.investigation?.applicability
@@ -85,15 +93,22 @@ export function loadValidatedChangeContract(
       },
     );
   }
-  const adapter = createOpenSpecAdapter(root);
-
-  for (const schemaName of ['spec-driven', 'expense-app']) {
-    adapter.whichSchema(schemaName);
-    adapter.validateSchema(schemaName);
-  }
-  const status = adapter.status(before.contract.changeId, before.schemaName);
-  const validation = adapter.validateChange(before.contract.changeId);
-  const after = inspectSnapshot(root, requestedChangeId);
+  const providerEvaluation = evaluatePlanningProvider(
+    createOpenSpecPlanningProviderPort(root),
+    {
+      repositoryRoot: root,
+      planningRoot: before.planningProvider.binding.planningRoot,
+      changeId: before.contract.changeId,
+      contractName: before.schemaName,
+      revision: { kind: 'worktree' },
+      readOnly: true,
+    },
+  );
+  const after = inspectSnapshot(
+    root,
+    requestedChangeId,
+    planningProviderReader,
+  );
 
   if (before.digest !== after.digest) {
     throw workflowError(
@@ -102,27 +117,17 @@ export function loadValidatedChangeContract(
       ExitCode.staleState,
     );
   }
-  if (!status.isComplete) {
-    const diagnostics = status.artifacts
-      .filter(({ status: artifactStatus }) => artifactStatus !== 'done')
-      .map(({ id, status: artifactStatus, missingDependencies }) => ({
-        artifactId: id,
-        missingDependencies,
-        status: artifactStatus,
-      }))
-      .sort((left, right) => compareText(left.artifactId, right.artifactId));
+  if (providerEvaluation.change.readiness !== 'ready') {
     throw workflowError(
       'OPENSPEC_CHANGE_NOT_READY',
       'OpenSpec does not report the complete managed artifact graph.',
       ExitCode.verification,
-      { details: { diagnostics } },
+      { details: { diagnostics: providerEvaluation.change.blockers } },
     );
   }
 
-  const diagnostics = stableDiagnostics(
-    validation.items.flatMap(({ issues }) => issues),
-  );
-  if (!validation.valid) {
+  const diagnostics = [...providerEvaluation.change.diagnostics];
+  if (!providerEvaluation.change.valid) {
     throw workflowError(
       'OPENSPEC_CHANGE_INVALID',
       'OpenSpec strict validation rejected the managed change.',
@@ -150,14 +155,22 @@ export function loadValidatedChangeContract(
     },
     diagnostics,
     artifactModes: after.artifactModes,
-    contractDigest: after.digest,
+    contractDigest: crypto
+      .createHash('sha256')
+      .update('managed-change-provider-evaluation-v1\0')
+      .update(after.digest)
+      .update('\0')
+      .update(providerEvaluation.evaluationDigest)
+      .digest('hex'),
     planningAssurance,
+    planningProvider: after.planningProvider,
   };
 }
 
 function inspectSnapshot(
   repositoryRoot: string,
   requestedChangeId: string,
+  planningProviderReader: PlanningProviderBindingReaderPort,
 ): ContractSnapshot {
   const config = loadWorkflowConfig(repositoryRoot);
   const changeId = assertChangeId(requestedChangeId);
@@ -177,6 +190,12 @@ function inspectSnapshot(
     config.changeRoot,
     changeId,
     schemaName,
+  );
+  const planningProvider = resolveCurrentOpenSpecProviderBinding(
+    planningProviderReader,
+    repositoryRoot,
+    config.changeRoot,
+    changeId,
   );
   const preliminary = loadChangeContract(repositoryRoot, changeId, schemaName);
   const schema = inspectOpenSpecSchemaContract(repositoryRoot);
@@ -220,6 +239,9 @@ function inspectSnapshot(
     path.join(repositoryRoot, 'pnpm-lock.yaml'),
     path.join(repositoryRoot, 'pnpm-workspace.yaml'),
     ...runtimeFiles,
+    ...(planningProvider.artifactPath === null
+      ? []
+      : [path.join(repositoryRoot, planningProvider.artifactPath)]),
   ]);
   const artifactDigests = digestArtifacts(repositoryRoot, artifactPaths);
   const artifactModes = Object.fromEntries(
@@ -236,7 +258,14 @@ function inspectSnapshot(
   const digest = crypto
     .createHash('sha256')
     .update('managed-change-contract-v1\0')
-    .update(JSON.stringify({ schemaName, artifactDigests, artifactModes }))
+    .update(
+      JSON.stringify({
+        schemaName,
+        planningProvider,
+        artifactDigests,
+        artifactModes,
+      }),
+    )
     .digest('hex');
 
   return {
@@ -246,6 +275,7 @@ function inspectSnapshot(
     artifactPaths,
     artifactDigests,
     artifactModes,
+    planningProvider,
     digest,
   };
 }
@@ -388,27 +418,6 @@ function uniqueSortedPaths(repositoryRoot: string, paths: string[]): string[] {
         relative(repositoryRoot, right),
       ),
   );
-}
-
-function stableDiagnostics(
-  issues: Array<Record<string, unknown>>,
-): ManagedChangeDiagnostic[] {
-  return issues
-    .map((issue) => ({
-      level: issue.level as ManagedChangeDiagnostic['level'],
-      path: String(issue.path),
-      message: String(issue.message),
-      ...(typeof issue.line === 'number' ? { line: issue.line } : {}),
-      ...(typeof issue.column === 'number' ? { column: issue.column } : {}),
-    }))
-    .sort(
-      (left, right) =>
-        compareText(left.path, right.path) ||
-        (left.line ?? 0) - (right.line ?? 0) ||
-        (left.column ?? 0) - (right.column ?? 0) ||
-        compareText(left.level, right.level) ||
-        compareText(left.message, right.message),
-    );
 }
 
 function canonicalRepositoryRoot(repositoryRoot: string): string {

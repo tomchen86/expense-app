@@ -1,6 +1,17 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 
+import {
+  ATTEMPT_STATUSES_V2,
+  JOB_STATUSES_V2,
+  AttemptResultCodecError,
+  assertAttemptAcceptanceBindingV1,
+  createAttemptAcceptanceBindingV1,
+  type AttemptAcceptanceBindingV1,
+  type AttemptStatusV2,
+  type JobStatusV2,
+} from '@jigwright/core/job-attempt-runtime';
+
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import type { GrantRequest } from '../authority/execution-governance.ts';
@@ -52,16 +63,8 @@ export type WorkflowRecord = {
   engineBinding: string;
 };
 
-export type JobStatus =
-  | 'queued'
-  | 'running'
-  | 'waiting-retry'
-  | 'waiting-grant'
-  | 'waiting-human-input'
-  | 'succeeded'
-  | 'failed-terminal'
-  | 'stale'
-  | 'cancelled';
+/** Compatibility name for the public core-owned V2 Job state vocabulary. */
+export type JobStatus = JobStatusV2;
 
 export type RetryPolicy = {
   maxAttempts: number;
@@ -127,17 +130,8 @@ export type RetryMode =
   | 'new-context'
   | 'none';
 
-export type AttemptStatus =
-  | 'created'
-  | 'leased'
-  | 'running'
-  | 'succeeded'
-  | 'failed-retryable'
-  | 'failed-terminal'
-  | 'timed-out'
-  | 'stale'
-  | 'late-duplicate'
-  | 'cancelled';
+/** Compatibility name for the public core-owned V2 Attempt state vocabulary. */
+export type AttemptStatus = AttemptStatusV2;
 
 export type AttemptRetention = 'active' | 'debug' | 'pinned';
 
@@ -235,18 +229,8 @@ export type AttemptRecord = {
   updatedAt: string;
 };
 
-export type AttemptResult = {
-  schemaVersion: 1;
-  resultId: string;
-  workflowId: string;
-  epoch: number;
-  contextDigest: string;
-  jobId: string;
-  attemptId: string;
-  outputDigest: string;
-  acceptance: 'accepted' | 'stale' | 'late-duplicate';
-  completedAt: string;
-};
+/** Compatibility name for the public core-owned acceptance binding DTO. */
+export type AttemptResult = AttemptAcceptanceBindingV1;
 
 export type RetryDecision = {
   retryable: boolean;
@@ -2019,47 +2003,12 @@ export function assertAttemptRecord(value: unknown): AttemptRecord {
 export function assertAttemptResult(value: AttemptResult): AttemptResult;
 export function assertAttemptResult(value: unknown): AttemptResult;
 export function assertAttemptResult(value: unknown): AttemptResult {
-  if (
-    !isPlainObject(value) ||
-    !hasExactKeys(value, [
-      'acceptance',
-      'attemptId',
-      'completedAt',
-      'contextDigest',
-      'epoch',
-      'jobId',
-      'outputDigest',
-      'resultId',
-      'schemaVersion',
-      'workflowId',
-    ]) ||
-    value.schemaVersion !== 1 ||
-    !['accepted', 'stale', 'late-duplicate'].includes(String(value.acceptance))
-  ) {
+  try {
+    return assertAttemptAcceptanceBindingV1(value);
+  } catch (error) {
+    if (!(error instanceof AttemptResultCodecError)) throw error;
     throw executionInvalid('Attempt result is invalid.');
   }
-  assertDigest(value.resultId);
-  assertIdentifier(value.workflowId, 'result workflowId');
-  assertPositiveInteger(value.epoch, 'result epoch');
-  assertDigest(value.contextDigest);
-  assertIdentifier(value.jobId, 'result jobId');
-  assertIdentifier(value.attemptId, 'result attemptId');
-  assertDigest(value.outputDigest);
-  assertTimestamp(value.completedAt);
-  const identity = {
-    workflowId: value.workflowId,
-    epoch: value.epoch,
-    contextDigest: value.contextDigest,
-    jobId: value.jobId,
-    attemptId: value.attemptId,
-    outputDigest: value.outputDigest,
-    acceptance: value.acceptance,
-    completedAt: value.completedAt,
-  };
-  if (digestCanonical(identity) !== value.resultId) {
-    throw executionInvalid('Attempt result identity digest is invalid.');
-  }
-  return deepFreeze(structuredClone(value) as AttemptResult);
 }
 
 function assertSemanticJobSpec(value: unknown): SemanticJobSpec {
@@ -2559,21 +2508,18 @@ export function createAttemptResult(
   if (!['accepted', 'stale', 'late-duplicate'].includes(acceptance)) {
     throw executionInvalid('Attempt result acceptance is invalid.');
   }
-  const identity = {
-    workflowId: attempt.workflowId,
-    epoch: attempt.epoch,
-    contextDigest: attempt.contextDigest,
-    jobId: attempt.jobId,
-    attemptId: attempt.attemptId,
-    outputDigest,
-    acceptance,
-    completedAt,
-  };
-  return assertAttemptResult({
-    schemaVersion: 1,
-    resultId: digestCanonical(identity),
-    ...identity,
-  });
+  return assertAttemptResult(
+    createAttemptAcceptanceBindingV1({
+      workflowId: attempt.workflowId,
+      epoch: attempt.epoch,
+      contextDigest: attempt.contextDigest,
+      jobId: attempt.jobId,
+      attemptId: attempt.attemptId,
+      outputDigest,
+      acceptance,
+      completedAt,
+    }),
+  );
 }
 
 function isWithinAutomaticBudget(input: {
@@ -3160,29 +3106,8 @@ const WORKFLOW_BLOCKERS = new Set<WorkflowBlocker['kind']>([
   'manual-reconciliation',
   'harness-intervention',
 ]);
-const JOB_STATUSES = new Set<JobStatus>([
-  'queued',
-  'running',
-  'waiting-retry',
-  'waiting-grant',
-  'waiting-human-input',
-  'succeeded',
-  'failed-terminal',
-  'stale',
-  'cancelled',
-]);
-const ATTEMPT_STATUSES = new Set<AttemptStatus>([
-  'created',
-  'leased',
-  'running',
-  'succeeded',
-  'failed-retryable',
-  'failed-terminal',
-  'timed-out',
-  'stale',
-  'late-duplicate',
-  'cancelled',
-]);
+const JOB_STATUSES = new Set<JobStatus>(JOB_STATUSES_V2);
+const ATTEMPT_STATUSES = new Set<AttemptStatus>(ATTEMPT_STATUSES_V2);
 const RETRY_MODES = new Set<RetryMode>([
   'same-input',
   'execution-policy-change',

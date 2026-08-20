@@ -14,6 +14,11 @@
     "test:timings": "node --experimental-strip-types ../../scripts/workflow-full-gate.ts --timings",
     "typecheck": "tsc -p tsconfig.json"
   },
+  "dependencies": {
+    "@jigwright/agent-runtime": "workspace:*",
+    "@jigwright/core": "workspace:*",
+    "@jigwright/grants": "workspace:*"
+  },
   "devDependencies": {
     "@types/node": "^24.13.3"
   }

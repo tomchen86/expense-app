@@ -4,6 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
   DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING,
   loadAiAdapterPolicy,
 } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
@@ -113,11 +114,52 @@ test('v4 policy snapshots conservative retry accounting and rebuilds one charge 
       request,
       'invocation-accounting-2',
     );
+    let throwingParserCalls = 0;
+    assert.throws(
+      () =>
+        authorizeAutomaticProviderRetry(runtime, {
+          failed,
+          failedRequest: request,
+          replacementRequest,
+          replacementExecutionPolicy: policy,
+          dataAuthorizationPolicyPort: {
+            parseCurrentDocument() {
+              throwingParserCalls += 1;
+              throw new Error('fixture parser refusal');
+            },
+          },
+          now: '2026-08-03T09:00:02.000Z',
+        }),
+      (error) => isWorkflowError(error, 'PROVIDER_RETRY_ACCOUNTING_STALE'),
+    );
+    assert.equal(throwingParserCalls, 1);
+
+    let mismatchedParserCalls = 0;
+    assert.throws(
+      () =>
+        authorizeAutomaticProviderRetry(runtime, {
+          failed,
+          failedRequest: request,
+          replacementRequest,
+          replacementExecutionPolicy: policy,
+          dataAuthorizationPolicyPort: {
+            parseCurrentDocument() {
+              mismatchedParserCalls += 1;
+              return { ...policy, digest: '0'.repeat(64) };
+            },
+          },
+          now: '2026-08-03T09:00:02.000Z',
+        }),
+      (error) => isWorkflowError(error, 'PROVIDER_RETRY_ACCOUNTING_STALE'),
+    );
+    assert.equal(mismatchedParserCalls, 1);
+
     const authorization = authorizeAutomaticProviderRetry(runtime, {
       failed,
       failedRequest: request,
       replacementRequest,
       replacementExecutionPolicy: policy,
+      dataAuthorizationPolicyPort: AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
       now: '2026-08-03T09:00:02.000Z',
     });
     assert.equal(authorization.decision.automatic, true);
@@ -248,6 +290,8 @@ test('a readable v1 execution-policy snapshot cannot authorize new automatic wor
             'invocation-accounting-v1-retry',
           ),
           replacementExecutionPolicy: policy,
+          dataAuthorizationPolicyPort:
+            AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
           now: '2026-08-03T09:00:02.000Z',
         }),
       (error) => isWorkflowError(error, 'PROVIDER_RETRY_ACCOUNTING_REQUIRED'),

@@ -6,7 +6,10 @@ import {
   resolveActorIdentity,
   type ActorSignal,
 } from '../../modules/provider-orchestration/actor-identity.ts';
-import { loadAiAdapterPolicy } from '../../runtime/provider-execution/ai-adapter-policy.ts';
+import {
+  AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
+  loadAiAdapterPolicy,
+} from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import {
   assessAssurance,
   ASSURANCE_ASSESSMENT_POLICY_DIGEST,
@@ -204,6 +207,7 @@ import {
   type LegacyPlanMigrationSubject,
 } from '../../adapters/compatibility/investigation-v2/legacy-plan-migration.ts';
 import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
+import type { GrantVerifierPort } from '../../modules/authority/grant-verifier-port.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import {
   createInteractiveSshSigner,
@@ -376,7 +380,7 @@ export type ProposeOptions = {
   collaborationGrant?: {
     grantId: string;
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
   };
 };
 
@@ -386,11 +390,11 @@ export type ProposeResumeOptions = {
   collaborationGrant?: {
     grantId: string;
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
   };
   collaborationGrantValidation?: {
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
   };
   executionGrantAuthorization?: ProviderExecutionGrantAuthorization & {
     replacementRequest: ProviderInvocationRequest;
@@ -3158,6 +3162,7 @@ function assertPlanReviewRetryExecutionDecision(
     failedRequest,
     replacementRequest,
     replacementExecutionPolicy,
+    dataAuthorizationPolicyPort: AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
     boundedGrantRequest: executionGrantAuthorization?.grantRequest,
     executionGrantAuthorization,
   });

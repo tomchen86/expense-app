@@ -3,6 +3,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
+import type {
+  DataAuthorizationLimits,
+  DataAuthorizationPolicyPort,
+  DataAuthorizationPolicyV4,
+  DataAuthorizationProviderPolicy,
+  DataAuthorizationProviderReservation,
+  DataAuthorizationRetryAccounting,
+  LoadedDataAuthorizationPolicyV4,
+} from '../../modules/provider-orchestration/data-authorization-policy-port.ts';
 import {
   listBuiltInProviders,
   type ProviderId,
@@ -53,42 +62,16 @@ export const DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING = Object.freeze({
   }),
 });
 
-export type AiAdapterLimits = {
-  timeoutMs: number;
-  aggregateOutputBytes: number;
-  maxConcurrent: number;
-};
+export type AiAdapterLimits = DataAuthorizationLimits;
 
-export type AiAdapterProviderPolicy = {
-  enabled: boolean;
-};
+export type AiAdapterProviderPolicy = DataAuthorizationProviderPolicy;
 
-export type AiAdapterProviderReservation = {
-  providerCostMicros: number;
-  providerTokens: number;
-};
+export type AiAdapterProviderReservation = DataAuthorizationProviderReservation;
 
-export type AiAdapterRetryAccounting = {
-  maxAttempts: number;
-  maxCumulativeRuntimeMs: number;
-  maxProviderCostMicros: number;
-  maxProviderTokens: number;
-  maxSameFailureFingerprint: number;
-  maxRepairAttempts: number;
-  deadlineMs: number;
-  providerLimits: Record<ProviderId, number>;
-  reservations: Record<ProviderId, AiAdapterProviderReservation>;
-};
+export type AiAdapterRetryAccounting =
+  DataAuthorizationRetryAccounting<ProviderId>;
 
-export type AiAdapterPolicy = {
-  schemaVersion: 4;
-  mode: 'managed-read-only';
-  launchPolicy: 'lifecycle-only';
-  requiredControls: string[];
-  providers: Record<ProviderId, AiAdapterProviderPolicy>;
-  limits: AiAdapterLimits;
-  retryAccounting: AiAdapterRetryAccounting;
-};
+export type AiAdapterPolicy = DataAuthorizationPolicyV4<ProviderId>;
 
 export type LegacyAiAdapterPolicy = Omit<
   AiAdapterPolicy,
@@ -97,11 +80,7 @@ export type LegacyAiAdapterPolicy = Omit<
   schemaVersion: 3;
 };
 
-export type LoadedAiAdapterPolicy = {
-  policy: AiAdapterPolicy;
-  digest: string;
-  document: string;
-};
+export type LoadedAiAdapterPolicy = LoadedDataAuthorizationPolicyV4<ProviderId>;
 
 export type LoadedLegacyAiAdapterPolicy = {
   policy: LegacyAiAdapterPolicy;
@@ -153,6 +132,12 @@ export function parseLegacyAiAdapterPolicyDocument(
     document: content,
   };
 }
+
+export const AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT: DataAuthorizationPolicyPort<ProviderId> =
+  Object.freeze({
+    readCurrent: loadAiAdapterPolicy,
+    parseCurrentDocument: parseAiAdapterPolicyDocument,
+  });
 
 function parsePolicyJson(content: string): unknown {
   if (typeof content !== 'string' || Buffer.byteLength(content) > 1_048_576) {

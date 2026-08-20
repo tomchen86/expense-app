@@ -1,9 +1,5 @@
 import crypto from 'node:crypto';
 
-import {
-  parseAiAdapterPolicyDocument,
-  type LoadedAiAdapterPolicy,
-} from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   decideRetry,
@@ -33,6 +29,18 @@ import {
   type ProviderInvocationRecord,
 } from '../../runtime/storage-journal/provider-invocation-store.ts';
 import { createProviderExecutionBudgetAuthority } from '../../runtime/provider-execution/provider-execution-policy-authority.ts';
+import type {
+  DataAuthorizationPolicyPort,
+  LoadedDataAuthorizationPolicyV4,
+} from './data-authorization-policy-port.ts';
+
+type ProviderDataAuthorizationPolicy = LoadedDataAuthorizationPolicyV4<
+  ProviderInvocationRequest['providerId']
+>;
+type DataAuthorizationPolicyParser = Pick<
+  DataAuthorizationPolicyPort<ProviderInvocationRequest['providerId']>,
+  'parseCurrentDocument'
+>;
 
 export type AuthorizedProviderRetry = Readonly<{
   workflow: WorkflowRecord;
@@ -94,7 +102,8 @@ export function authorizeAutomaticProviderRetry(
     failed: ProviderInvocationRecord;
     failedRequest: ProviderInvocationRequest;
     replacementRequest: ProviderInvocationRequest;
-    replacementExecutionPolicy: LoadedAiAdapterPolicy;
+    replacementExecutionPolicy: ProviderDataAuthorizationPolicy;
+    dataAuthorizationPolicyPort: DataAuthorizationPolicyParser;
     boundedGrantRequest?: GrantRequest;
     executionGrantAuthorization?: ProviderExecutionGrantAuthorization;
     now?: string;
@@ -282,12 +291,13 @@ export function authorizeAutomaticProviderRetry(
 
 function validateReplacementPolicy(input: {
   replacementRequest: ProviderInvocationRequest;
-  replacementExecutionPolicy: LoadedAiAdapterPolicy;
+  replacementExecutionPolicy: ProviderDataAuthorizationPolicy;
+  dataAuthorizationPolicyPort: DataAuthorizationPolicyParser;
   executionGrantAuthorization?: ProviderExecutionGrantAuthorization;
-}): LoadedAiAdapterPolicy {
-  let loaded: LoadedAiAdapterPolicy;
+}): ProviderDataAuthorizationPolicy {
+  let loaded: ProviderDataAuthorizationPolicy;
   try {
-    loaded = parseAiAdapterPolicyDocument(
+    loaded = input.dataAuthorizationPolicyPort.parseCurrentDocument(
       input.replacementExecutionPolicy.document,
     );
   } catch {

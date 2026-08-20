@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { renderPlanningProviderBinding } from '../src/modules/planning-provider/planning-provider-binding.ts';
 import {
   readContentRecord,
   writeContentRecord,
@@ -18,7 +19,7 @@ import {
   commitPlanningTransition,
   type PlanningTransitionTestHooks,
 } from '../src/application/propose/planning-transition.ts';
-import { inspectPlanningTransition } from '../src/adapters/planning/openspec/documents/planning-contract.ts';
+import { inspectPlanningTransition } from '../src/composition-root/planning-provider-production.ts';
 import {
   abortSession,
   startSession,
@@ -102,10 +103,101 @@ test('plan-commit introduces an unchecked change through one exact managed commi
     assert.equal(report.transitionKind, 'introduction');
     assert.equal(report.tree, result.tree);
     assert.deepEqual(report.changedPaths, expectedPaths);
+    const planningReport = readPlanningTransitionReport(
+      reportsDirectory,
+      result.reportId,
+    );
+    assert.match(
+      planningReport.artifactDigests[
+        'workflow/change-providers/planned-change.json'
+      ] ?? '',
+      /^[0-9a-f]{64}$/u,
+    );
     assert.deepEqual(report.trailers, [
       'Change: planned-change',
       'Transition: plan',
     ]);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('plan-commit refuses planning-provider v1 migration before staging', () => {
+  const original = openSpecBinding('demo-change');
+  const candidates = [
+    { ...original, providerId: 'spectra' },
+    { ...original, adapterContractVersion: 2 },
+    {
+      ...original,
+      providerRequirement: {
+        ...original.providerRequirement,
+        package: '@example/planning-provider',
+      },
+    },
+    {
+      ...original,
+      providerRequirement: {
+        ...original.providerRequirement,
+        version: '2.0.0',
+      },
+    },
+    { ...original, planningRoot: 'other/changes/demo-change' },
+  ];
+
+  for (const candidate of candidates) {
+    const repository = createPlanningRepository('demo-change', true);
+    try {
+      const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+      fs.writeFileSync(
+        path.join(repository, 'workflow/change-providers/demo-change.json'),
+        renderPlanningProviderBinding(candidate),
+      );
+      fs.appendFileSync(
+        path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+        '\nReviewed provider migration attempt.\n',
+      );
+
+      assert.throws(
+        () => commitPlanningTransition(repository, 'demo-change'),
+        (error) => isWorkflowError(error, 'PROVIDER_MIGRATION_UNSUPPORTED'),
+      );
+      assert.equal(git(repository, ['rev-parse', 'HEAD']).trim(), baselineHead);
+      assert.equal(git(repository, ['diff', '--cached', '--name-only']), '');
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+});
+
+test('plan-commit upgrades a pre-cutover OpenSpec revision to an identical explicit binding', () => {
+  const repository = createPlanningRepository('demo-change', true);
+  const bindingPath = path.join(
+    repository,
+    'workflow/change-providers/demo-change.json',
+  );
+  try {
+    fs.rmSync(bindingPath);
+    git(repository, ['add', '-A']);
+    git(repository, ['commit', '-m', 'Record pre-cutover OpenSpec baseline']);
+    const baselineHead = git(repository, ['rev-parse', 'HEAD']).trim();
+
+    fs.appendFileSync(
+      path.join(repository, 'openspec/changes/demo-change/proposal.md'),
+      '\nReviewed legacy planning revision.\n',
+    );
+    fs.writeFileSync(
+      bindingPath,
+      renderPlanningProviderBinding(openSpecBinding('demo-change')),
+    );
+
+    const result = commitPlanningTransition(repository, 'demo-change');
+    assert.equal(result.kind, 'revision');
+    assert.equal(result.baselineHead, baselineHead);
+    assert.deepEqual(result.changedPaths, [
+      'openspec/changes/demo-change/proposal.md',
+      'workflow/change-providers/demo-change.json',
+    ]);
+    assert.equal(git(repository, ['status', '--porcelain']), '');
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -179,7 +271,10 @@ test('planning inspection selects the explicit v2 grammar before semantic activa
       expectedPaths,
     );
     assert.equal(inspection.schemaName, 'expense-app-v2');
-    assert.deepEqual(inspection.currentPaths, expectedPaths);
+    assert.deepEqual(
+      inspection.currentPaths,
+      planningChangeTreePaths('v2-change', 'expense-app-v2'),
+    );
     for (const artifactName of [
       'investigation.json',
       'execution.json',
@@ -906,7 +1001,13 @@ function writeChange(
   }>,
 ): void {
   const changeDirectory = path.join(repository, 'openspec/changes', changeId);
+  const bindingDirectory = path.join(repository, 'workflow/change-providers');
   fs.mkdirSync(path.join(changeDirectory, 'specs/demo'), { recursive: true });
+  fs.mkdirSync(bindingDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(bindingDirectory, `${changeId}.json`),
+    renderPlanningProviderBinding(openSpecBinding(changeId)),
+  );
   fs.writeFileSync(
     path.join(changeDirectory, '.openspec.yaml'),
     'schema: expense-app\ncreated: 2026-07-15\n',
@@ -937,6 +1038,22 @@ function writeChange(
       '',
     ].join('\n'),
   );
+}
+
+function openSpecBinding(
+  changeId: string,
+): Parameters<typeof renderPlanningProviderBinding>[0] {
+  return {
+    schemaVersion: 1,
+    changeId,
+    providerId: 'openspec',
+    adapterContractVersion: 1,
+    providerRequirement: {
+      package: '@fission-ai/openspec',
+      version: '1.6.0',
+    },
+    planningRoot: `openspec/changes/${changeId}`,
+  };
 }
 
 function writeTasks(
@@ -980,6 +1097,16 @@ function writeGuard(repository: string, changeId: string, taskIds: string[]) {
 }
 
 function planningPaths(
+  changeId: string,
+  schemaName: 'expense-app' | 'expense-app-v2' = 'expense-app',
+): string[] {
+  return [
+    ...planningChangeTreePaths(changeId, schemaName),
+    `workflow/change-providers/${changeId}.json`,
+  ].sort();
+}
+
+function planningChangeTreePaths(
   changeId: string,
   schemaName: 'expense-app' | 'expense-app-v2' = 'expense-app',
 ): string[] {

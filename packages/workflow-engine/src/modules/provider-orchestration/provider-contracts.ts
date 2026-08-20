@@ -18,6 +18,7 @@ import type {
   EngineProviderRole,
   ProviderRoleAssignment,
 } from './role-scheduler.ts';
+import type { ProviderWrapperProtocolReceipt } from './agent-runtime-protocol.ts';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -138,6 +139,7 @@ export type ProviderProcessOutcome = {
   elapsedMs: number;
   stdout: string;
   stderr: string;
+  wrapperProtocolReceipt?: ProviderWrapperProtocolReceipt;
 };
 
 export type ProviderOutputValidator = {
@@ -145,6 +147,59 @@ export type ProviderOutputValidator = {
   version: number;
   digest: string;
   validate(value: unknown): boolean;
+};
+
+/**
+ * The plain governed-projection comparison returned by provider execution.
+ * Core consumers need the observation values, not the concrete Git projection
+ * implementation that produced them.
+ */
+export type ProviderGovernedProjectionComparison = {
+  unchanged: boolean;
+  changedCategories: string[];
+  beforeDigest: string;
+  afterDigest: string;
+};
+
+/**
+ * The canonical identity of a resolved provider executable: its reviewed
+ * candidate path, the canonicalized real path, and the exact file metadata that
+ * must remain stable across a launch. It is recorded so the engine can re-check
+ * identity around the invocation rather than trusting a first-seen path.
+ */
+export type ProviderExecutableIdentity = {
+  candidatePath: string;
+  realPath: string;
+  device: string;
+  inode: string;
+  mode: number;
+  uid: number;
+  gid: number;
+  size: number;
+  mtimeNs: string;
+  sha256: string;
+};
+
+/**
+ * The non-durable execution observation returned by provider execution. It
+ * carries adapter-parsed semantic output bound to the request digest and the
+ * observed governed projection equality, but it is not durable authority: the
+ * invocation store/lifecycle remains the owner of any ProviderProcessResult.
+ */
+export type ProviderRunnerReport = {
+  invocationId: string;
+  providerId: ProviderId;
+  purpose: ProviderInvocationRequest['purpose'];
+  requestDigest: string;
+  semanticOutput: unknown;
+  semanticOutputDigest: string;
+  assurance: 'unchanged-governed-projection';
+  projection: ProviderGovernedProjectionComparison;
+  sameUserProcessConfined: false;
+  residuals: string[];
+  executable: ProviderExecutableIdentity;
+  elapsedMs: number;
+  wrapperProtocolReceipt?: ProviderWrapperProtocolReceipt;
 };
 
 /**
@@ -178,18 +233,7 @@ export type ProviderRuntimeObservation = {
   };
   sameUserProcessConfined: false;
   residuals: string[];
-  executable: {
-    candidatePath: string;
-    realPath: string;
-    device: string;
-    inode: string;
-    mode: number;
-    uid: number;
-    gid: number;
-    size: number;
-    mtimeNs: string;
-    sha256: string;
-  };
+  executable: ProviderExecutableIdentity;
   elapsedMs: number;
 };
 

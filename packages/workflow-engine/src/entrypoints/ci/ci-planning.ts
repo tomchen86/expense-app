@@ -50,7 +50,14 @@ import {
   assertPlanningTaskHistory,
   taskStates,
 } from '../../adapters/planning/openspec/documents/planning-contract.ts';
-import { requiredPlanningArtifactPaths } from '../../modules/source/planning-paths.ts';
+import {
+  resolveHistoricalOpenSpecPlanningTransitionBinding,
+  resolveHistoricalOpenSpecProviderBinding,
+} from '../../composition-root/planning-provider-production.ts';
+import {
+  planningProviderBindingPath,
+  requiredPlanningArtifactPaths,
+} from '../../modules/source/planning-paths.ts';
 import type { PlanningTaskState } from '../../runtime/storage-journal/planning-report.ts';
 import { normalizeChangedPath } from '../../runtime/session-workspace/paths.ts';
 
@@ -73,6 +80,20 @@ export type CiPlanningCommitValidation = {
 export type CiCollaborationGrantUse = CollaborationGrantUseIdentity;
 
 export { assertUniqueCollaborationGrantUses };
+
+export function resolveHistoricalPlanningProviderForCi(
+  repositoryRoot: string,
+  commit: string,
+  changeRoot: string,
+  changeId: string,
+): void {
+  resolveHistoricalOpenSpecProviderBinding(
+    repositoryRoot,
+    commit,
+    changeRoot,
+    changeId,
+  );
+}
 
 /**
  * Reconstruct every collaboration-grant claim made by exact planning
@@ -298,6 +319,8 @@ export function validateCiPlanningCommit(
     prefix,
   );
   const afterEntries = listTreeEntries(repositoryRoot, facts.hash, prefix);
+  const kind: CiPlanningCommitValidation['kind'] =
+    beforeEntries.length === 0 ? 'introduction' : 'revision';
   const afterPaths = new Set(afterEntries.map(({ path }) => path));
   const deletedPaths = beforeEntries
     .map(({ path }) => path)
@@ -341,12 +364,24 @@ export function validateCiPlanningCommit(
   );
 
   let beforeTasks: ParsedTask[] | undefined;
-  let kind: CiPlanningCommitValidation['kind'];
   if (beforeEntries.length === 0) {
-    kind = 'introduction';
+    const planningProvider = resolveHistoricalOpenSpecPlanningTransitionBinding(
+      repositoryRoot,
+      facts.parents[0],
+      facts.hash,
+      normalizedChangeRoot,
+      changeId,
+      kind,
+    );
+    const expectedIntroductionPaths = [
+      ...afterEntries.map(({ path: artifactPath }) => artifactPath),
+      ...(planningProvider.source === 'explicit'
+        ? [planningProviderBindingPath(changeId)]
+        : []),
+    ].sort();
     if (
       JSON.stringify(planningPaths) !==
-      JSON.stringify(afterEntries.map(({ path }) => path))
+      JSON.stringify(expectedIntroductionPaths)
     ) {
       throw ciPlanningError(
         'CI_PLANNING_INTRODUCTION_INVALID',
@@ -354,7 +389,6 @@ export function validateCiPlanningCommit(
       );
     }
   } else {
-    kind = 'revision';
     const beforePaths = new Set(beforeEntries.map(({ path }) => path));
     const repairedPaths = requiredArtifactPaths(
       normalizedChangeRoot,
@@ -375,6 +409,14 @@ export function validateCiPlanningCommit(
       // The parent tree carries the schema it was committed under, which is
       // deliberately allowed to precede a legacy-to-v2 migration commit.
       replayPlanningSchema(repositoryRoot, facts.parents[0], changeId),
+    );
+    resolveHistoricalOpenSpecPlanningTransitionBinding(
+      repositoryRoot,
+      facts.parents[0],
+      facts.hash,
+      normalizedChangeRoot,
+      changeId,
+      kind,
     );
     beforeTasks = parseTasks(
       readRequiredFile(repositoryRoot, facts.parents[0], `${prefix}/tasks.md`),

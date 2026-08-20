@@ -28,6 +28,11 @@ import {
   type CollaborationGrantSelectionCoreBinding,
 } from '../../runtime/storage-journal/collaboration-grant-store.ts';
 import { digestRequiredCheckDefinitions } from '../../modules/lifecycle/contract-digests.ts';
+import type {
+  AssertExactStateSet,
+  ExactStateSet,
+  ManagedTaskDiffReviewState,
+} from '../../modules/lifecycle/managed-workflow-state-contract.ts';
 import {
   readEvidenceNode,
   writeEvidenceNode,
@@ -58,6 +63,7 @@ import {
   loadActiveSessionContext,
   loadInvestigationRuntimeContext,
 } from '../../composition-root/lifecycle-context.ts';
+import type { GrantVerifierPort } from '../../modules/authority/grant-verifier-port.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
 import { completionDocumentPaths } from '../../runtime/managed-documents/validation/managed-documents.ts';
 import {
@@ -228,7 +234,7 @@ export type BeginTaskDiffReviewOptions = Readonly<{
   collaborationGrant?: Readonly<{
     grantId: string;
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
     directHumanReviewAttestation?: DirectHumanReviewAttestation;
   }>;
 }>;
@@ -236,7 +242,7 @@ export type BeginTaskDiffReviewOptions = Readonly<{
 export type ReconcileTaskDiffReviewOptions = Readonly<{
   collaborationGrantValidation?: Readonly<{
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
   }>;
   testCrashAfter?: 'result-binding-persisted';
 }>;
@@ -247,7 +253,7 @@ export type SubmitExternalTaskDiffReviewOptions = Readonly<{
   collaborationGrant?: Readonly<{
     grantId: string;
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
     directHumanReviewAttestation?: DirectHumanReviewAttestation;
   }>;
   testCrashAfter?: 'grant-reserved' | 'grant-consumed';
@@ -257,7 +263,7 @@ export type SubmitExternalTaskDiffReviewContinuationOptions = Readonly<{
   collaborationGrant?: Readonly<{
     grantId: string;
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
     directHumanReviewAttestation?: DirectHumanReviewAttestation;
   }>;
   testCrashAfter?: 'grant-reserved' | 'grant-consumed';
@@ -497,6 +503,13 @@ export type TaskDiffReviewInspectionStatus =
   | TaskDiffReviewLifecycleStatus
   | TaskDiffReviewContinuationLifecycleStatus
   | TaskDiffReviewExternalContinuationLifecycleStatus;
+
+export type TaskDiffReviewStateContract = AssertExactStateSet<
+  ExactStateSet<
+    TaskDiffReviewInspectionStatus['state'],
+    ManagedTaskDiffReviewState
+  >
+>;
 
 export type CurrentAuthenticatedTaskDiffReview = Readonly<{
   source: 'provider' | 'external';

@@ -6,7 +6,7 @@ import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import {
   matchesAllowedPath,
   normalizePolicyPath,
-} from '../../runtime/session-workspace/paths.ts';
+} from '../../foundation/repository-path/repository-path.ts';
 
 /**
  * What a repository path is, for the purpose of deciding how much planning

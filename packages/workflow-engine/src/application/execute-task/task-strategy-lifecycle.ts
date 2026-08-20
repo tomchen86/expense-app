@@ -27,6 +27,7 @@ import {
   createTaskStrategyImplementationSubject,
   type TaskStrategyImplementationSubject,
 } from '../../modules/provider-orchestration/task-strategy-provider-contract.ts';
+import type { ManagedTaskStrategyState } from '../../modules/lifecycle/managed-workflow-state-contract.ts';
 import {
   readTaskStrategyCallerImplementationBinding,
   readTaskStrategyCallerImplementationReservation,
@@ -59,23 +60,7 @@ import { inspectSession } from '../finalize/verification.ts';
 
 type TddStrategy = 'cross-agent-tdd' | 'tdd-single-agent';
 
-export type TaskStrategyLifecycleState =
-  | 'not-required'
-  | 'session-terminal'
-  | 'transformation-required'
-  | 'transformation-produced'
-  | 'red-authoring'
-  | 'implementation-required'
-  | 'ready'
-  | 'reservation-persisted'
-  | 'collaboration-grant-required'
-  | 'waiting-for-provider'
-  | 'provider-succeeded-awaiting-import'
-  | 'provider-failed'
-  | 'correction-required'
-  | 'correction-exhausted'
-  | 'caller-supplied-awaiting-import'
-  | 'patch-imported';
+export type TaskStrategyLifecycleState = ManagedTaskStrategyState;
 
 export type TaskStrategyLifecycleStatus = Readonly<{
   schemaVersion: 1;

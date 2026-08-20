@@ -17,6 +17,7 @@ import {
   discoverRepository,
   runGit,
 } from '../../../../runtime/repository-transaction/git.ts';
+import type { PlanningProviderBindingReaderPort } from '../../../../modules/planning-provider/planning-provider-binding.ts';
 import {
   assertInvestigationPlanningActivation,
   readActivationMarkerFile,
@@ -32,6 +33,13 @@ import type {
   PlanningTaskState,
   PlanningTransitionReport,
 } from '../../../../runtime/storage-journal/planning-report.ts';
+import type { ResolvedPlanningProviderBinding } from '../../../../modules/planning-provider/planning-provider-binding.ts';
+import { planningProviderBindingPath } from '../../../../modules/source/planning-paths.ts';
+import {
+  resolveCurrentOpenSpecPlanningTransitionBinding,
+  resolveHistoricalOpenSpecProviderBinding as resolveHistoricalOpenSpecProviderBindingWithReader,
+  resolveHistoricalOpenSpecPlanningTransitionBinding as resolveHistoricalOpenSpecPlanningTransitionBindingWithReader,
+} from './openspec-provider-binding.ts';
 
 export type PlanningInspection = {
   /** Completed tasks this transition reopened, named rather than counted. */
@@ -42,11 +50,49 @@ export type PlanningInspection = {
   beforeTasks: ParsedTask[] | undefined;
   currentPaths: string[];
   artifactDigests: Record<string, string>;
+  planningProvider: ResolvedPlanningProviderBinding;
 };
 
 export { assertPlanningPaths } from '../../../../modules/source/planning-paths.ts';
 
+export function resolveHistoricalOpenSpecPlanningTransitionBinding(
+  planningProviderReader: PlanningProviderBindingReaderPort,
+  repositoryRoot: string,
+  parentCommit: string,
+  candidateCommit: string,
+  changeRoot: string,
+  changeId: string,
+  transitionKind: 'introduction' | 'revision',
+): ResolvedPlanningProviderBinding {
+  return resolveHistoricalOpenSpecPlanningTransitionBindingWithReader(
+    planningProviderReader,
+    repositoryRoot,
+    parentCommit,
+    candidateCommit,
+    changeRoot,
+    changeId,
+    transitionKind,
+  );
+}
+
+export function resolveHistoricalOpenSpecProviderBinding(
+  planningProviderReader: PlanningProviderBindingReaderPort,
+  repositoryRoot: string,
+  commit: string,
+  changeRoot: string,
+  changeId: string,
+): ResolvedPlanningProviderBinding {
+  return resolveHistoricalOpenSpecProviderBindingWithReader(
+    planningProviderReader,
+    repositoryRoot,
+    commit,
+    changeRoot,
+    changeId,
+  );
+}
+
 export function inspectPlanningTransition(
+  planningProviderReader: PlanningProviderBindingReaderPort,
   repositoryRoot: string,
   baselineHead: string,
   changeRoot: string,
@@ -101,10 +147,20 @@ export function inspectPlanningTransition(
     `${changeRoot}/${changeId}`,
   );
   const transitionKind = beforeTasks ? 'revision' : 'introduction';
+  const planningProvider = resolveCurrentOpenSpecPlanningTransitionBinding(
+    planningProviderReader,
+    repositoryRoot,
+    baselineHead,
+    changeRoot,
+    changeId,
+    transitionKind,
+  );
+  const bindingPath = planningProviderBindingPath(changeId);
   if (
     transitionKind === 'introduction' &&
     (baselinePaths.length > 0 ||
-      JSON.stringify(currentPaths) !== JSON.stringify(changedPaths))
+      JSON.stringify([...currentPaths, bindingPath].sort()) !==
+        JSON.stringify(changedPaths))
   ) {
     throw workflowError(
       'PLANNING_INTRODUCTION_INVALID',
@@ -128,6 +184,7 @@ export function inspectPlanningTransition(
     beforeTasks,
     currentPaths,
     artifactDigests,
+    planningProvider,
   };
 }
 

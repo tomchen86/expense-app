@@ -55,12 +55,15 @@ import {
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
   type ProviderProcessResult,
+  type ProviderRunnerReport,
   type ProviderRuntimeObservation,
 } from '../../modules/provider-orchestration/provider-contracts.ts';
-import {
-  PROVIDER_RUNNER_RESIDUALS,
-  type ProviderRunnerReport,
-} from '../provider-execution/provider-runner.ts';
+import type {
+  AgentRuntimeCompletionReceipt,
+  AgentRuntimeProcessProgressProjection,
+  ProviderInvocationAcceptanceBinding,
+} from '../../modules/provider-orchestration/agent-runtime-port.ts';
+import { PROVIDER_RUNNER_RESIDUALS } from '../provider-execution/provider-runner.ts';
 import {
   INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
@@ -95,8 +98,6 @@ import {
   readProviderRepairAuthorityBinding,
   registerProviderRuntimeEvidence,
   withCurrentProviderPromptContext,
-  type ProviderPromptContextBinding,
-  type ProviderRepairAuthorityBinding,
   type ProviderRepairFailureInput,
 } from '../provider-execution/provider-execution-governance.ts';
 import {
@@ -380,6 +381,8 @@ export type ProviderInvocationRecord = {
   lease: ProviderInvocationLease | null;
   result: ProviderProcessResult | null;
   failure: ProviderInvocationFailure | null;
+  /** Absent on historical and synchronous single-shot invocation records. */
+  runtimeReceipt?: AgentRuntimeCompletionReceipt;
   createdAt: string;
   updatedAt: string;
 };
@@ -436,22 +439,7 @@ export type ProviderExecutionPolicySnapshotCurrent =
 export type ProviderExecutionPolicySnapshot =
   ProviderExecutionPolicySnapshotV1 | ProviderExecutionPolicySnapshotCurrent;
 
-export type ProviderInvocationAcceptanceBinding = Readonly<{
-  schemaVersion: 1;
-  kind: 'provider-invocation-acceptance-binding';
-  invocationId: string;
-  requestDigest: string;
-  ownerWorkflowId: string;
-  legacyRevision: number;
-  leaseGeneration: number;
-  context: ProviderPromptContextBinding;
-  executionJobId: string;
-  executionAttemptId: string;
-  executionRevision: number;
-  executionStateDigest: string;
-  repair: ProviderRepairAuthorityBinding;
-  bindingDigest: string;
-}>;
+export type { ProviderInvocationAcceptanceBinding } from '../../modules/provider-orchestration/agent-runtime-port.ts';
 
 type ProviderCompletionCandidate = Readonly<{
   schemaVersion: 1;
@@ -462,6 +450,7 @@ type ProviderCompletionCandidate = Readonly<{
   leaseGeneration: number;
   leaseTokenDigest: string;
   result: ProviderProcessResult;
+  runtimeReceipt?: AgentRuntimeCompletionReceipt;
   completedAt: string;
   candidateDigest: string;
 }>;
@@ -985,6 +974,47 @@ export function readProviderInvocation(
   return record;
 }
 
+/**
+ * Read one optional async receipt only after re-admitting its durable
+ * Job/Attempt projection. Historical and synchronous records intentionally
+ * return null instead of being rewritten.
+ */
+export function readProviderInvocationRuntimeReceipt(
+  paths: InvestigationRuntimePaths,
+  requestedInvocationId: string,
+): AgentRuntimeCompletionReceipt | null {
+  const record = readProviderInvocation(paths, requestedInvocationId);
+  const receipt = record.runtimeReceipt;
+  if (receipt === undefined) return null;
+  const execution = readExecutionJobState(paths, receipt.executionJobId);
+  const attempt = execution?.attempts.find(
+    ({ attemptId }) => attemptId === receipt.executionAttemptId,
+  );
+  const terminalStatusMatches =
+    receipt.terminalState === 'succeeded'
+      ? attempt?.status === 'succeeded' || attempt?.status === 'late-duplicate'
+      : attempt !== undefined &&
+        [
+          'failed-retryable',
+          'failed-terminal',
+          'timed-out',
+          'stale',
+          'cancelled',
+        ].includes(attempt.status);
+  if (
+    execution === null ||
+    execution.revision <= receipt.executionRevision ||
+    attempt === undefined ||
+    attempt.jobId !== receipt.executionJobId ||
+    attempt.legacyInvocation?.invocationId !== receipt.invocationId ||
+    attempt.legacyInvocation.legacyRevision !== receipt.terminalRevision ||
+    !terminalStatusMatches
+  ) {
+    throw invocationInvalid();
+  }
+  return receipt;
+}
+
 function readProviderInvocationCore(
   paths: InvestigationRuntimePaths,
   requestedInvocationId: string,
@@ -1030,6 +1060,15 @@ function readProviderInvocationCore(
       ) !== canonicalJson(record.result))
   ) {
     throw invocationInvalid();
+  }
+  if (record.runtimeReceipt !== undefined) {
+    const projection = projectProviderInvocationExecution({ record, request });
+    if (
+      record.runtimeReceipt.executionJobId !== projection.job.jobId ||
+      record.runtimeReceipt.executionAttemptId !== projection.attempt.attemptId
+    ) {
+      throw invocationInvalid();
+    }
   }
   if (
     manifest.kind === 'plan-review-manifest' &&
@@ -2227,6 +2266,7 @@ export function completeProviderInvocationFromRunner(
     leaseToken: string;
     report: ProviderRunnerReport;
     acceptanceBinding: ProviderInvocationAcceptanceBinding;
+    runtimeProgress?: AgentRuntimeProcessProgressProjection;
     now?: string;
     simulateCrashAfterExecutionAcceptance?: boolean;
   },
@@ -2255,6 +2295,7 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(
     leaseToken: string;
     report: ProviderRunnerReport;
     acceptanceBinding: ProviderInvocationAcceptanceBinding;
+    runtimeProgress?: AgentRuntimeProcessProgressProjection;
     now?: string;
     simulateCrashAfterExecutionAcceptance?: boolean;
   },
@@ -2291,6 +2332,16 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(
             paths,
             input.acceptanceBinding,
           );
+          const runtimeReceipt =
+            input.runtimeProgress === undefined
+              ? undefined
+              : createAgentRuntimeCompletionReceipt({
+                  current,
+                  request,
+                  acceptanceBinding: input.acceptanceBinding,
+                  terminalState: 'succeeded',
+                  progress: input.runtimeProgress,
+                });
           persistProviderCompletionCandidate(paths, {
             current,
             request,
@@ -2298,6 +2349,7 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(
             leaseToken: input.leaseToken,
             result,
             completedAt: new Date(now).toISOString(),
+            ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
           });
           persistProviderExecutionResult(
             paths,
@@ -2323,6 +2375,7 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(
             lease: null,
             result,
             failure: null,
+            ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
             updatedAt: new Date(now).toISOString(),
           };
         },
@@ -2401,7 +2454,9 @@ export function recoverProviderInvocationCompletionUnderLifecycleLock(
         const candidateMatches =
           candidate === null ||
           (current.revision === candidate.expectedLegacyRevision + 1 &&
-            canonicalJson(current.result) === canonicalJson(candidate.result));
+            canonicalJson(current.result) === canonicalJson(candidate.result) &&
+            canonicalJson(current.runtimeReceipt ?? null) ===
+              canonicalJson(candidate.runtimeReceipt ?? null));
         const expectedRevisionMatches =
           current.revision === input.expectedLegacyRevision ||
           candidate?.expectedLegacyRevision === input.expectedLegacyRevision;
@@ -2449,6 +2504,9 @@ export function recoverProviderInvocationCompletionUnderLifecycleLock(
         lease: null,
         result: candidate.result,
         failure: null,
+        ...(candidate.runtimeReceipt === undefined
+          ? {}
+          : { runtimeReceipt: candidate.runtimeReceipt }),
         updatedAt: candidate.completedAt,
       });
       assertMonotonicInvocationTransition(current, next);
@@ -2523,6 +2581,7 @@ function persistProviderCompletionCandidate(
     leaseGeneration: number;
     leaseToken: string;
     result: ProviderProcessResult;
+    runtimeReceipt?: AgentRuntimeCompletionReceipt;
     completedAt: string;
   },
 ): ProviderCompletionCandidate {
@@ -2536,6 +2595,9 @@ function persistProviderCompletionCandidate(
     leaseGeneration: input.leaseGeneration,
     leaseTokenDigest: sha256(input.leaseToken),
     result,
+    ...(input.runtimeReceipt === undefined
+      ? {}
+      : { runtimeReceipt: input.runtimeReceipt }),
     completedAt: input.completedAt,
   };
   const candidate = {
@@ -2597,6 +2659,9 @@ function readProviderCompletionCandidate(
       'leaseTokenDigest',
       'requestDigest',
       'result',
+      ...(Object.prototype.hasOwnProperty.call(value, 'runtimeReceipt')
+        ? ['runtimeReceipt']
+        : []),
       'schemaVersion',
     ]) ||
     value.schemaVersion !== 1 ||
@@ -2619,6 +2684,22 @@ function readProviderCompletionCandidate(
     providerOutputSchemaGeneration(request),
     'legacy-subset',
   );
+  const runtimeReceipt = Object.prototype.hasOwnProperty.call(
+    value,
+    'runtimeReceipt',
+  )
+    ? assertAgentRuntimeCompletionReceipt(value.runtimeReceipt)
+    : undefined;
+  if (
+    runtimeReceipt !== undefined &&
+    (runtimeReceipt.invocationId !== invocationId ||
+      runtimeReceipt.requestDigest !== request.requestDigest ||
+      runtimeReceipt.leasedRevision !== value.expectedLegacyRevision ||
+      runtimeReceipt.leaseGeneration !== value.leaseGeneration ||
+      runtimeReceipt.terminalState !== 'succeeded')
+  ) {
+    throw invocationUnsafe();
+  }
   const payload = { ...value };
   delete payload.candidateDigest;
   if (sha256(canonicalJson(payload)) !== value.candidateDigest) {
@@ -2627,6 +2708,7 @@ function readProviderCompletionCandidate(
   return deepFreeze({
     ...(value as Omit<ProviderCompletionCandidate, 'result'>),
     result,
+    ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
   });
 }
 
@@ -2752,6 +2834,10 @@ export function failProviderInvocation(
     leaseGeneration: number;
     leaseToken: string;
     failure: ProviderInvocationFailure;
+    runtimeEvidence?: Readonly<{
+      acceptanceBinding: ProviderInvocationAcceptanceBinding;
+      progress: AgentRuntimeProcessProgressProjection;
+    }>;
     repair?: ProviderRepairFailureInput;
     now?: string;
   },
@@ -2780,6 +2866,16 @@ export function failProviderInvocation(
             recordedAt: new Date(now).toISOString(),
           });
         }
+        const runtimeReceipt =
+          input.runtimeEvidence === undefined
+            ? undefined
+            : createAgentRuntimeCompletionReceipt({
+                current,
+                request: readProviderInvocationRequest(paths, invocationId),
+                acceptanceBinding: input.runtimeEvidence.acceptanceBinding,
+                terminalState: 'failed',
+                progress: input.runtimeEvidence.progress,
+              });
         return {
           ...current,
           revision: current.revision + 1,
@@ -2787,11 +2883,55 @@ export function failProviderInvocation(
           lease: null,
           result: null,
           failure,
+          ...(runtimeReceipt === undefined ? {} : { runtimeReceipt }),
           updatedAt: new Date(now).toISOString(),
         };
       },
     ),
   );
+}
+
+function createAgentRuntimeCompletionReceipt(input: {
+  current: ProviderInvocationRecord;
+  request: ProviderInvocationRequest;
+  acceptanceBinding: ProviderInvocationAcceptanceBinding;
+  terminalState: 'succeeded' | 'failed';
+  progress: AgentRuntimeProcessProgressProjection;
+}): AgentRuntimeCompletionReceipt {
+  assertProviderAcceptanceBinding(input.acceptanceBinding);
+  if (
+    input.current.state !== 'leased' ||
+    input.current.lease === null ||
+    input.acceptanceBinding.invocationId !== input.current.invocationId ||
+    input.acceptanceBinding.requestDigest !== input.request.requestDigest ||
+    input.acceptanceBinding.requestDigest !== input.current.requestDigest ||
+    input.acceptanceBinding.legacyRevision !== input.current.revision ||
+    input.acceptanceBinding.leaseGeneration !== input.current.leaseGeneration
+  ) {
+    throw providerAcceptanceBindingStale();
+  }
+  const progress = assertAgentRuntimeProcessProgress(input.progress);
+  const payload = {
+    schemaVersion: 1 as const,
+    kind: 'agent-runtime-completion-receipt' as const,
+    invocationId: input.current.invocationId,
+    requestDigest: input.request.requestDigest,
+    leasedRevision: input.current.revision,
+    terminalRevision: input.current.revision + 1,
+    leaseGeneration: input.current.leaseGeneration,
+    executionJobId: input.acceptanceBinding.executionJobId,
+    executionAttemptId: input.acceptanceBinding.executionAttemptId,
+    executionRevision: input.acceptanceBinding.executionRevision,
+    executionStateDigest: input.acceptanceBinding.executionStateDigest,
+    acceptanceBindingDigest: input.acceptanceBinding.bindingDigest,
+    terminalState: input.terminalState,
+    launched: true as const,
+    progress,
+  };
+  return assertAgentRuntimeCompletionReceipt({
+    ...payload,
+    receiptDigest: sha256(canonicalJson(payload)),
+  });
 }
 
 function withProviderWorkerLifecycle<T>(
@@ -3985,6 +4125,9 @@ function assertProviderInvocationRecord(
       'lease',
       'result',
       'failure',
+      ...(Object.prototype.hasOwnProperty.call(value, 'runtimeReceipt')
+        ? ['runtimeReceipt']
+        : []),
       'createdAt',
       'updatedAt',
     ]) ||
@@ -4021,6 +4164,12 @@ function assertProviderInvocationRecord(
   assertInvocationId(value.invocationId);
   assertInvestigationId(value.investigationId);
   assertChangeId(value.changeId);
+  const runtimeReceipt = Object.prototype.hasOwnProperty.call(
+    value,
+    'runtimeReceipt',
+  )
+    ? assertAgentRuntimeCompletionReceipt(value.runtimeReceipt)
+    : undefined;
   if (
     (value.state === 'prepared' &&
       (value.lease !== null ||
@@ -4038,11 +4187,142 @@ function assertProviderInvocationRecord(
       (value.lease !== null ||
         value.result !== null ||
         value.failure === null)) ||
-    (value.lease !== null && value.lease.generation !== value.leaseGeneration)
+    (value.lease !== null &&
+      value.lease.generation !== value.leaseGeneration) ||
+    (runtimeReceipt !== undefined &&
+      (value.state !== runtimeReceipt.terminalState ||
+        value.invocationId !== runtimeReceipt.invocationId ||
+        value.requestDigest !== runtimeReceipt.requestDigest ||
+        value.revision !== runtimeReceipt.terminalRevision ||
+        value.leaseGeneration !== runtimeReceipt.leaseGeneration))
   ) {
     throw invocationInvalid();
   }
-  return value as ProviderInvocationRecord;
+  return (
+    runtimeReceipt === undefined ? value : { ...value, runtimeReceipt }
+  ) as ProviderInvocationRecord;
+}
+
+function assertAgentRuntimeCompletionReceipt(
+  value: unknown,
+): AgentRuntimeCompletionReceipt {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'invocationId',
+      'requestDigest',
+      'leasedRevision',
+      'terminalRevision',
+      'leaseGeneration',
+      'executionJobId',
+      'executionAttemptId',
+      'executionRevision',
+      'executionStateDigest',
+      'acceptanceBindingDigest',
+      'terminalState',
+      'launched',
+      'progress',
+      'receiptDigest',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'agent-runtime-completion-receipt' ||
+    typeof value.invocationId !== 'string' ||
+    !isDigest(value.requestDigest) ||
+    !Number.isSafeInteger(value.leasedRevision) ||
+    (value.leasedRevision as number) < 0 ||
+    !Number.isSafeInteger(value.terminalRevision) ||
+    value.terminalRevision !== (value.leasedRevision as number) + 1 ||
+    !Number.isSafeInteger(value.leaseGeneration) ||
+    (value.leaseGeneration as number) < 1 ||
+    typeof value.executionJobId !== 'string' ||
+    !/^[a-z0-9][a-z0-9._:-]{0,255}$/.test(value.executionJobId) ||
+    typeof value.executionAttemptId !== 'string' ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,511}$/u.test(value.executionAttemptId) ||
+    !Number.isSafeInteger(value.executionRevision) ||
+    (value.executionRevision as number) < 0 ||
+    !isDigest(value.executionStateDigest) ||
+    !isDigest(value.acceptanceBindingDigest) ||
+    (value.terminalState !== 'succeeded' && value.terminalState !== 'failed') ||
+    value.launched !== true ||
+    !isDigest(value.receiptDigest)
+  ) {
+    throw invocationInvalid();
+  }
+  assertInvocationId(value.invocationId);
+  const progress = assertAgentRuntimeProcessProgress(value.progress);
+  if (
+    (value.terminalState === 'succeeded' &&
+      progress.processState !== 'exited') ||
+    sha256(
+      canonicalJson(
+        Object.fromEntries(
+          Object.entries(value).filter(([key]) => key !== 'receiptDigest'),
+        ),
+      ),
+    ) !== value.receiptDigest
+  ) {
+    throw invocationInvalid();
+  }
+  return deepFreeze(
+    structuredClone({ ...value, progress }) as AgentRuntimeCompletionReceipt,
+  );
+}
+
+function assertAgentRuntimeProcessProgress(
+  value: unknown,
+): AgentRuntimeProcessProgressProjection {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'schemaVersion',
+      'kind',
+      'processState',
+      'eventCount',
+      'stdoutBytes',
+      'stderrBytes',
+      'lastProcessActivityElapsedMs',
+      'lastProviderActivityElapsedMs',
+    ]) ||
+    value.schemaVersion !== 1 ||
+    value.kind !== 'agent-runtime-process-progress' ||
+    ![
+      'not-started',
+      'running',
+      'exited',
+      'timed-out',
+      'cancelled',
+      'output-limit',
+      'spawn-error',
+      'protocol-error',
+    ].includes(String(value.processState)) ||
+    !Number.isSafeInteger(value.eventCount) ||
+    (value.eventCount as number) < 0 ||
+    !Number.isSafeInteger(value.stdoutBytes) ||
+    (value.stdoutBytes as number) < 0 ||
+    !Number.isSafeInteger(value.stderrBytes) ||
+    (value.stderrBytes as number) < 0 ||
+    !isNullableNonnegativeInteger(value.lastProcessActivityElapsedMs) ||
+    !isNullableNonnegativeInteger(value.lastProviderActivityElapsedMs) ||
+    ((value.eventCount as number) === 0) !==
+      (value.lastProcessActivityElapsedMs === null) ||
+    (value.lastProviderActivityElapsedMs !== null &&
+      (value.lastProcessActivityElapsedMs === null ||
+        (value.lastProviderActivityElapsedMs as number) >
+          (value.lastProcessActivityElapsedMs as number)))
+  ) {
+    throw invocationInvalid();
+  }
+  return deepFreeze(
+    structuredClone(value) as AgentRuntimeProcessProgressProjection,
+  );
+}
+
+function isNullableNonnegativeInteger(value: unknown): boolean {
+  return (
+    value === null || (Number.isSafeInteger(value) && (value as number) >= 0)
+  );
 }
 
 function assertMonotonicInvocationTransition(

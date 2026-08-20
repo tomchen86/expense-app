@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 
-import { loadAiAdapterPolicy } from '../../../runtime/provider-execution/ai-adapter-policy.ts';
+import {
+  AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
+  loadAiAdapterPolicy,
+} from '../../../runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.ts';
 import {
   compareAndSwapEvidenceRefsDocument,
@@ -2969,6 +2972,7 @@ function assertProviderRetryExecutionDecision(
     failedRequest: previousRequest,
     replacementRequest,
     replacementExecutionPolicy,
+    dataAuthorizationPolicyPort: AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
     boundedGrantRequest: executionGrantAuthorization?.grantRequest,
     executionGrantAuthorization,
   });

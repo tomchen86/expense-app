@@ -6,21 +6,400 @@ import test from 'node:test';
 
 import { loadChangeContract } from '../src/adapters/consumer/expense-app/work-registry/contracts.ts';
 import { WorkflowError } from '../src/foundation/errors/errors.ts';
-import { loadValidatedChangeContract } from '../src/adapters/planning/openspec/documents/managed-change-contract.ts';
+import {
+  assertPlanningProviderV1Migration,
+  parsePlanningProviderBinding,
+  planningProviderBindingDigest,
+  renderPlanningProviderBinding,
+  type PlanningProviderBindingV1,
+} from '../src/modules/planning-provider/planning-provider-binding.ts';
+import {
+  evaluatePlanningProvider,
+  type PlanningProviderChangeResult,
+  type PlanningProviderPort,
+} from '../src/modules/planning-provider/planning-provider-port.ts';
+import { loadValidatedChangeContract as loadValidatedChangeContractWithReader } from '../src/adapters/planning/openspec/documents/managed-change-contract.ts';
 import { parseValidation } from '../src/adapters/planning/openspec/documents/openspec-payloads.ts';
 import {
+  resolveCurrentOpenSpecProviderBinding,
+  resolveHistoricalOpenSpecProviderBinding,
+} from '../src/adapters/planning/openspec/documents/openspec-provider-binding.ts';
+import { planningProviderBindingReader } from '../src/runtime/repository-transaction/planning-provider-binding-store.ts';
+import {
   createFixtureRepository,
+  git,
   sourceRepositoryRoot,
   writeV2ChangeArtifacts,
 } from './fixture.ts';
 
 const CHANGE_ID = 'fixture-managed-change';
 
+function loadValidatedChangeContract(repositoryRoot: string, changeId: string) {
+  return loadValidatedChangeContractWithReader(
+    repositoryRoot,
+    changeId,
+    planningProviderBindingReader,
+  );
+}
+
+test('core consumes a fake planning-provider port and rejects contradictory evidence', () => {
+  const change: PlanningProviderChangeResult = Object.freeze({
+    readiness: 'ready',
+    blockers: [],
+    valid: true,
+    diagnostics: [],
+    validationDigest: 'b'.repeat(64),
+  });
+  let validationCalls = 0;
+  const fake: PlanningProviderPort = {
+    id: 'fixture-provider',
+    contractVersion: 7,
+    inspectInstallation: () => ({
+      providerId: 'fixture-provider',
+      adapterContractVersion: 7,
+      providerVersion: '1.0.0',
+      installationDigest: 'a'.repeat(64),
+    }),
+    validateChange: () => {
+      validationCalls += 1;
+      return change;
+    },
+    inspectChange: () => change,
+  };
+  const context = {
+    repositoryRoot: '/fixture/repository',
+    planningRoot: 'fixture/changes/demo-change',
+    changeId: 'demo-change',
+    contractName: 'fixture-contract',
+    revision: { kind: 'worktree' as const },
+    readOnly: true as const,
+  };
+
+  const evaluation = evaluatePlanningProvider(fake, context);
+  assert.match(evaluation.evaluationDigest, /^[0-9a-f]{64}$/u);
+  assert.ok(Object.isFrozen(evaluation.installation));
+  assert.ok(Object.isFrozen(evaluation.change));
+  assert.ok(Object.isFrozen(evaluation.change.diagnostics));
+  assert.equal(validationCalls, 1);
+  assert.throws(
+    () =>
+      evaluatePlanningProvider(
+        {
+          ...fake,
+          inspectInstallation: () => ({
+            providerId: 'other-provider',
+            adapterContractVersion: 7,
+            providerVersion: '1.0.0',
+            installationDigest: 'a'.repeat(64),
+          }),
+        },
+        context,
+      ),
+    (error) => isWorkflowError(error, 'PLANNING_PROVIDER_CONTRACT_INVALID'),
+  );
+  assert.throws(
+    () =>
+      evaluatePlanningProvider(
+        { ...fake, inspectInstallation: () => null as never },
+        context,
+      ),
+    (error) => isWorkflowError(error, 'PLANNING_PROVIDER_CONTRACT_INVALID'),
+  );
+  assert.throws(
+    () =>
+      evaluatePlanningProvider(
+        {
+          ...fake,
+          inspectChange: () => ({
+            ...change,
+            readiness: 'blocked',
+          }),
+        },
+        context,
+      ),
+    (error) => isWorkflowError(error, 'PLANNING_PROVIDER_CONTRACT_INVALID'),
+  );
+  assert.throws(
+    () =>
+      evaluatePlanningProvider(
+        {
+          ...fake,
+          validateChange: () => ({
+            ...change,
+            validationDigest: 'c'.repeat(64),
+          }),
+        },
+        context,
+      ),
+    (error) => isWorkflowError(error, 'PLANNING_PROVIDER_CONTRACT_INVALID'),
+  );
+
+  for (const invalidChange of [
+    {
+      ...change,
+      readiness: 'blocked' as const,
+      blockers: [
+        { artifactId: 'task', status: 'blocked', missingDependencies: [] },
+        { artifactId: 'task', status: 'blocked', missingDependencies: [] },
+      ],
+    },
+    {
+      ...change,
+      readiness: 'blocked' as const,
+      blockers: [
+        {
+          artifactId: 'task',
+          status: 'blocked',
+          missingDependencies: ['z', 'a'],
+        },
+      ],
+    },
+    {
+      ...change,
+      readiness: 'blocked' as const,
+      blockers: [
+        {
+          artifactId: 'task',
+          status: 'blocked',
+          missingDependencies: ['a', 'a'],
+        },
+      ],
+    },
+    {
+      ...change,
+      diagnostics: [
+        { level: 'ERROR' as const, path: 'proposal.md', message: 'invalid' },
+      ],
+    },
+    { ...change, executable: '/tmp/provider' },
+    {
+      ...change,
+      diagnostics: [
+        {
+          level: 'INFO' as const,
+          path: 7,
+          message: 'invalid',
+          argv: ['unsafe'],
+        },
+      ],
+    },
+    null,
+  ]) {
+    assert.throws(
+      () =>
+        evaluatePlanningProvider(
+          { ...fake, inspectChange: () => invalidChange as never },
+          context,
+        ),
+      (error) => isWorkflowError(error, 'PLANNING_PROVIDER_CONTRACT_INVALID'),
+    );
+  }
+});
+
+test('planning-provider binding is canonical, plane-specific, and refuses v1 migration', () => {
+  const binding: PlanningProviderBindingV1 = {
+    schemaVersion: 1,
+    changeId: CHANGE_ID,
+    providerId: 'openspec',
+    adapterContractVersion: 1,
+    providerRequirement: {
+      package: '@fission-ai/openspec',
+      version: '1.6.0',
+    },
+    planningRoot: `openspec/changes/${CHANGE_ID}`,
+  };
+  const source = renderPlanningProviderBinding(binding);
+  assert.deepEqual(parsePlanningProviderBinding(source, CHANGE_ID), binding);
+  assert.match(planningProviderBindingDigest(binding), /^[0-9a-f]{64}$/u);
+
+  for (const candidate of [
+    { ...binding, changeId: 'different-change' },
+    { ...binding, providerId: 'spectra' },
+    { ...binding, adapterContractVersion: 2 },
+    { ...binding, planningRoot: `other/changes/${CHANGE_ID}` },
+    {
+      ...binding,
+      providerRequirement: { ...binding.providerRequirement, version: '2.0.0' },
+    },
+  ]) {
+    assert.throws(
+      () => assertPlanningProviderV1Migration(binding, candidate),
+      (error) => isWorkflowError(error, 'PROVIDER_MIGRATION_UNSUPPORTED'),
+    );
+  }
+
+  assert.doesNotThrow(() =>
+    assertPlanningProviderV1Migration(binding, { ...binding }),
+  );
+  assert.throws(
+    () =>
+      parsePlanningProviderBinding(
+        source.replace('"schemaVersion": 1', '"schemaVersion": 2'),
+        CHANGE_ID,
+      ),
+    (error) => isWorkflowError(error, 'PROVIDER_BINDING_VERSION_UNSUPPORTED'),
+  );
+  assert.throws(
+    () => parsePlanningProviderBinding(`${source.trimEnd()} \n`, CHANGE_ID),
+    (error) => isWorkflowError(error, 'PROVIDER_BINDING_INVALID'),
+  );
+  assert.throws(
+    () =>
+      parsePlanningProviderBinding(
+        renderPlanningProviderBinding({
+          ...binding,
+          planningRoot: '../escape',
+        }),
+        CHANGE_ID,
+      ),
+    (error) => isWorkflowError(error, 'PROVIDER_BINDING_INVALID'),
+  );
+});
+
+test('planning-provider readers reject unsafe current files and retain pre-cutover OpenSpec history', () => {
+  for (const mutate of [
+    (repository: string, bindingPath: string) =>
+      fs.chmodSync(bindingPath, 0o755),
+    (repository: string, bindingPath: string) => {
+      const target = path.join(repository, 'binding-target.json');
+      fs.renameSync(bindingPath, target);
+      fs.symlinkSync(target, bindingPath);
+    },
+    (repository: string, bindingPath: string) => {
+      fs.linkSync(bindingPath, path.join(repository, 'binding-alias.json'));
+    },
+  ]) {
+    const repository = createManagedRepository();
+    try {
+      const bindingPath = path.join(
+        repository,
+        `workflow/change-providers/${CHANGE_ID}.json`,
+      );
+      mutate(repository, bindingPath);
+      assert.throws(
+        () =>
+          resolveCurrentOpenSpecProviderBinding(
+            planningProviderBindingReader,
+            repository,
+            'openspec/changes',
+            CHANGE_ID,
+          ),
+        (error) => isWorkflowError(error, 'PROVIDER_BINDING_INVALID'),
+      );
+    } finally {
+      fs.rmSync(repository, { recursive: true, force: true });
+    }
+  }
+
+  const historical = createFixtureRepository();
+  try {
+    const explicitHead = git(historical, ['rev-parse', 'HEAD']).trim();
+    assert.equal(
+      resolveHistoricalOpenSpecProviderBinding(
+        planningProviderBindingReader,
+        historical,
+        explicitHead,
+        'openspec/changes',
+        'demo-change',
+      ).source,
+      'explicit',
+    );
+
+    fs.rmSync(
+      path.join(historical, 'workflow/change-providers/demo-change.json'),
+    );
+    git(historical, ['add', '-A']);
+    git(historical, ['commit', '-m', 'Create pre-cutover legacy fixture']);
+    const legacyHead = git(historical, ['rev-parse', 'HEAD']).trim();
+    assert.equal(
+      resolveHistoricalOpenSpecProviderBinding(
+        planningProviderBindingReader,
+        historical,
+        legacyHead,
+        'openspec/changes',
+        'demo-change',
+      ).source,
+      'legacy-inferred',
+    );
+
+    fs.appendFileSync(
+      path.join(historical, 'openspec/changes/demo-change/.openspec.yaml'),
+      'unexpected: metadata\n',
+    );
+    git(historical, ['add', '-A']);
+    git(historical, ['commit', '-m', 'Corrupt legacy provider evidence']);
+    const corruptLegacyHead = git(historical, ['rev-parse', 'HEAD']).trim();
+    assert.throws(
+      () =>
+        resolveHistoricalOpenSpecProviderBinding(
+          planningProviderBindingReader,
+          historical,
+          corruptLegacyHead,
+          'openspec/changes',
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'PROVIDER_BINDING_LEGACY_UNPROVEN'),
+    );
+
+    fs.writeFileSync(
+      path.join(
+        historical,
+        'workflow/schemas/planning-provider-binding.schema.json',
+      ),
+      '{}\n',
+    );
+    git(historical, ['add', '-A']);
+    git(historical, ['commit', '-m', 'Activate planning provider bindings']);
+    const activatedHead = git(historical, ['rev-parse', 'HEAD']).trim();
+    assert.throws(
+      () =>
+        resolveHistoricalOpenSpecProviderBinding(
+          planningProviderBindingReader,
+          historical,
+          activatedHead,
+          'openspec/changes',
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'PROVIDER_BINDING_MISSING'),
+    );
+
+    fs.rmSync(
+      path.join(
+        historical,
+        'workflow/schemas/planning-provider-binding.schema.json',
+      ),
+    );
+    git(historical, ['add', '-A']);
+    git(historical, ['commit', '-m', 'Attempt to erase provider cutover']);
+    const erasedMarkerHead = git(historical, ['rev-parse', 'HEAD']).trim();
+    assert.throws(
+      () =>
+        resolveHistoricalOpenSpecProviderBinding(
+          planningProviderBindingReader,
+          historical,
+          erasedMarkerHead,
+          'openspec/changes',
+          'demo-change',
+        ),
+      (error) => isWorkflowError(error, 'PROVIDER_BINDING_MISSING'),
+    );
+  } finally {
+    fs.rmSync(historical, { recursive: true, force: true });
+  }
+});
+
 test('validated managed contract binds OpenSpec readiness to a full mode-aware snapshot', () => {
   const repository = createManagedRepository();
   let contract;
   try {
     contract = loadValidatedChangeContract(repository, CHANGE_ID);
+    fs.rmSync(
+      path.join(repository, `workflow/change-providers/${CHANGE_ID}.json`),
+    );
+    assert.throws(
+      () => loadValidatedChangeContract(repository, CHANGE_ID),
+      (error) => isWorkflowError(error, 'PROVIDER_BINDING_MISSING'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -35,10 +414,13 @@ test('validated managed contract binds OpenSpec readiness to a full mode-aware s
   });
   assert.deepEqual(contract.diagnostics, []);
   assert.match(contract.contractDigest, /^[0-9a-f]{64}$/);
+  assert.equal(contract.planningProvider.source, 'explicit');
+  assert.equal(contract.planningProvider.binding.providerId, 'openspec');
 
   for (const requiredPath of [
     `openspec/changes/${CHANGE_ID}/.openspec.yaml`,
     `openspec/changes/${CHANGE_ID}/proposal.md`,
+    `workflow/change-providers/${CHANGE_ID}.json`,
     'openspec/config.yaml',
     'openspec/schemas/expense-app/schema.yaml',
     'workflow/ai-adapter-policy.json',
@@ -65,6 +447,7 @@ test('v2 artifacts remain ineligible without a structured applicability decision
     const legacy = loadValidatedChangeContract(repository, 'demo-change');
     assert.equal(legacy.schemaName, 'expense-app');
     assert.equal(legacy.investigation, undefined);
+    assert.equal(legacy.planningProvider.source, 'explicit');
 
     writeV2ChangeArtifacts(repository);
     const v2 = loadChangeContract(repository, 'demo-change');
@@ -333,6 +716,22 @@ function createManagedRepository(): string {
     { recursive: true },
   );
   writeSyntheticChange(repository);
+  const bindingDirectory = path.join(repository, 'workflow/change-providers');
+  fs.mkdirSync(bindingDirectory, { recursive: true });
+  fs.writeFileSync(
+    path.join(bindingDirectory, `${CHANGE_ID}.json`),
+    renderPlanningProviderBinding({
+      schemaVersion: 1,
+      changeId: CHANGE_ID,
+      providerId: 'openspec',
+      adapterContractVersion: 1,
+      providerRequirement: {
+        package: '@fission-ai/openspec',
+        version: '1.6.0',
+      },
+      planningRoot: `openspec/changes/${CHANGE_ID}`,
+    }),
+  );
   installFakeOpenSpec(repository);
   return repository;
 }

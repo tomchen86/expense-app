@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { createFixtureTrackedObjectReaderPort } from '../../fixture-adapter/src/fixture-tracked-object-reader.ts';
+
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   parseInvestigationArtifact,
@@ -51,6 +53,47 @@ import {
 } from '../src/runtime/repository-transaction/tracked-tree-reader.ts';
 import { createMutationClassPolicy } from '../src/modules/source/mutation-class-policy.ts';
 import { git, isWorkflowError } from './fixture.ts';
+
+test('domain scanner consumes the public tracked-object reader port without Git', () => {
+  const treeOid = 'f'.repeat(40);
+  const trackedObjectReader = createFixtureTrackedObjectReaderPort([
+    {
+      kind: 'jigwright.fixture-tracked-tree.v1',
+      treeOid,
+      files: {
+        'src/fixture-consumer.ts': 'export const SecondConsumer = true;\n',
+      },
+    },
+  ]);
+
+  const result = scanInvestigationTreeFacts({
+    repositoryRoot: '/not/a/git/repository',
+    treeOid,
+    terms: [termWithProvenance('symbol', 'SecondConsumer')],
+    trackedObjectReader,
+  });
+
+  assert.equal(result.outcome, 'ready');
+  if (result.outcome !== 'ready') assert.fail('expected fixture-backed scan');
+  assert.deepEqual(
+    result.facts.terms[0]?.hits.map((hit) => hit.path.utf8),
+    ['src/fixture-consumer.ts'],
+  );
+
+  assert.throws(
+    () =>
+      scanInvestigationTreeFacts({
+        repositoryRoot: '/not/a/git/repository',
+        treeOid,
+        terms: [termWithProvenance('symbol', 'SecondConsumer')],
+        trackedObjectReader: {
+          contractVersion: 'jigwright.tracked-object-reader-port.v2',
+          readPinnedTree: trackedObjectReader.readPinnedTree,
+        } as never,
+      }),
+    (error) => isWorkflowError(error, 'TRACKED_OBJECT_READER_UNSUPPORTED'),
+  );
+});
 
 test('typed terms preserve exact bytes, deduplicate semantics, and retain every provenance', () => {
   assert.equal(

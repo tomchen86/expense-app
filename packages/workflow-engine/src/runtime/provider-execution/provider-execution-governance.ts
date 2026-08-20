@@ -48,6 +48,10 @@ import {
 } from '../session-workspace/paths.ts';
 import type { ProviderInvocationRequest } from '../../modules/provider-orchestration/provider-contracts.ts';
 import type {
+  ProviderPromptContextBinding,
+  ProviderRepairAuthorityBinding,
+} from '../../modules/provider-orchestration/agent-runtime-port.ts';
+import type {
   ProviderInvocationFailure,
   ProviderInvocationRecord,
 } from '../storage-journal/provider-invocation-store.ts';
@@ -57,15 +61,10 @@ const MAX_REPAIR_ERRORS = 64;
 const MAX_REPAIR_ERROR_MESSAGE_BYTES = 4_096;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
-export type ProviderPromptContextBinding = Readonly<{
-  ownerWorkflowId: string;
-  purpose: ProviderInvocationRequest['purpose'];
-  workflowId: string;
-  generation: number;
-  epoch: number;
-  contextDigest: string;
-  manifest: ContextManifest;
-}>;
+export type {
+  ProviderPromptContextBinding,
+  ProviderRepairAuthorityBinding,
+} from '../../modules/provider-orchestration/agent-runtime-port.ts';
 
 export type ProviderPromptContextRetentionBinding = Readonly<{
   workflowId: string;
@@ -119,15 +118,6 @@ export type ProviderRepairLineage = Readonly<{
   repairBudget: RepairBudget;
   createdAt: string;
   lineageDigest: string;
-}>;
-
-export type ProviderRepairAuthorityBinding = Readonly<{
-  invocationId: string;
-  lineagePath: string;
-  lineageDigest: string | null;
-  currentEvidencePath: string;
-  evidencePath: string | null;
-  evidenceDigest: string | null;
 }>;
 
 type ProviderExecutionEntry = Readonly<{

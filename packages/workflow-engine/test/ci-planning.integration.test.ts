@@ -7,6 +7,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
+import { renderPlanningProviderBinding } from '../src/modules/planning-provider/planning-provider-binding.ts';
 import { assertUniqueCollaborationGrantUses } from '../src/modules/authority/collaboration-grant.ts';
 import {
   collectHistoricalCollaborationGrantUses,
@@ -286,6 +287,69 @@ test('CI accepts an exact planning introduction reconstructed from Git', () => {
       planningAssurance: null,
       collaborationGrantUses: [],
     });
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI replays an explicit planning-provider binding from the planning commit', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    writeProviderBinding(repository);
+    const plan = commitPlan(repository);
+
+    const result = validateCiPlanningCommit(repository, plan, CHANGE_ID);
+    assert.equal(result.kind, 'introduction');
+    assert.deepEqual(
+      result.changedPaths,
+      [
+        ...planningPaths(CHANGE_ID),
+        `workflow/change-providers/${CHANGE_ID}.json`,
+      ].sort(),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI refuses a forged planning-provider v1 migration', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    writeProviderBinding(repository);
+    commitPlan(repository);
+
+    writeProviderBinding(repository, { providerId: 'spectra' });
+    fs.appendFileSync(
+      path.join(changeDirectory(repository), 'proposal.md'),
+      '\nForged provider migration.\n',
+    );
+    const revision = commitPlan(repository);
+    assert.throws(
+      () => validateCiPlanningCommit(repository, revision, CHANGE_ID),
+      (error) => isWorkflowError(error, 'PROVIDER_MIGRATION_UNSUPPORTED'),
+    );
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI keeps planning-provider activation monotonic after its marker is deleted', () => {
+  const repository = createRepository();
+  const marker = 'workflow/schemas/planning-provider-binding.schema.json';
+  try {
+    write(repository, marker, '{}\n');
+    commit(repository, 'Activate planning-provider bindings');
+    fs.rmSync(path.join(repository, marker));
+    commit(repository, 'Attempt to erase planning-provider activation');
+
+    writePlanningTree(repository);
+    const plan = commitPlan(repository);
+    assert.throws(
+      () => validateCiPlanningCommit(repository, plan, CHANGE_ID),
+      (error) => isWorkflowError(error, 'PROVIDER_BINDING_MISSING'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }
@@ -602,6 +666,29 @@ function writePlanningTree(
     repository,
     `${prefix}/specs/demo/spec.md`,
     '# Delta\n\n## ADDED Requirements\n',
+  );
+}
+
+function writeProviderBinding(
+  repository: string,
+  overrides: Partial<Parameters<typeof renderPlanningProviderBinding>[0]> = {},
+): void {
+  const binding = {
+    schemaVersion: 1 as const,
+    changeId: CHANGE_ID,
+    providerId: 'openspec',
+    adapterContractVersion: 1,
+    providerRequirement: {
+      package: '@fission-ai/openspec',
+      version: '1.6.0',
+    },
+    planningRoot: `openspec/changes/${CHANGE_ID}`,
+    ...overrides,
+  };
+  write(
+    repository,
+    `workflow/change-providers/${CHANGE_ID}.json`,
+    renderPlanningProviderBinding(binding),
   );
 }
 
@@ -1040,6 +1127,31 @@ test('CI accepts a revision that repairs a bootstrap-era planning tree', () => {
       `openspec/changes/${CHANGE_ID}/.openspec.yaml`,
       `openspec/changes/${CHANGE_ID}/requirement-audit.md`,
     ]);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('CI does not reinterpret corrupt provider metadata as a bootstrap repair', () => {
+  const repository = createRepository();
+  try {
+    writePlanningTree(repository);
+    const metadataPath = path.join(
+      changeDirectory(repository),
+      '.openspec.yaml',
+    );
+    fs.writeFileSync(
+      metadataPath,
+      'schema: spec-driven\ncreated: 2026-07-24\ncorrupt: true\n',
+    );
+    commit(repository, 'Admit corrupt bootstrap metadata');
+    fs.writeFileSync(metadataPath, 'schema: spec-driven\n');
+    const revision = commitPlan(repository);
+
+    assert.throws(
+      () => validateCiPlanningCommit(repository, revision, CHANGE_ID),
+      (error) => isWorkflowError(error, 'PROVIDER_BINDING_LEGACY_UNPROVEN'),
+    );
   } finally {
     fs.rmSync(repository, { recursive: true, force: true });
   }

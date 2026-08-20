@@ -1,0 +1,17 @@
+{
+  "name": "@jigwright/grants",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./collaboration-grant-envelope-reader": "./src/collaboration-grant-envelope-reader.ts",
+    "./grant-envelope-verifier": "./src/grant-envelope-verifier.ts",
+    "./grant-lifecycle": "./src/grant-lifecycle.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
+  }
+}

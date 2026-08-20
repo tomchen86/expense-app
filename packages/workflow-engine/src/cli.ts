@@ -236,6 +236,7 @@ import {
 import {
   dispatchProviderWorker,
   runProviderWorker,
+  runProviderWorkerAsync,
 } from './entrypoints/worker/provider-worker.ts';
 import { readProviderInvocation } from './runtime/storage-journal/provider-invocation-store.ts';
 import {
@@ -297,6 +298,62 @@ export function runCli(argv: string[], cwd = process.cwd()): number {
     printFailure(workflowFailure, json, args);
     return workflowFailure.exitCode;
   }
+}
+
+/**
+ * Production CLI entry. Only the hidden provider worker is async; every other
+ * command retains the existing synchronous dispatcher and output contract.
+ */
+export async function runCliAsync(
+  argv: string[],
+  cwd = process.cwd(),
+): Promise<number> {
+  const json = hasTerminalJsonOutputFlag(argv);
+  const args = json ? argv.slice(0, -1) : [...argv];
+
+  try {
+    const result = await dispatchAsync(args, cwd);
+    printSuccess(
+      json
+        ? { ...result, nextSteps: workflowResultNextSteps(result, args) }
+        : result,
+      json,
+    );
+    return 0;
+  } catch (error) {
+    const workflowFailure =
+      error instanceof WorkflowError
+        ? error
+        : workflowError(
+            'INTERNAL_ERROR',
+            error instanceof Error ? error.message : String(error),
+            ExitCode.internal,
+          );
+    printFailure(workflowFailure, json, args);
+    return workflowFailure.exitCode;
+  }
+}
+
+async function dispatchAsync(
+  args: string[],
+  cwd: string,
+  providerWorker: typeof runProviderWorkerAsync = runProviderWorkerAsync,
+): Promise<CommandResult> {
+  const [command, ...rest] = args;
+  if (command !== 'provider-worker') return dispatch(args, cwd);
+  requireArgumentCount(command, rest, 1, 1);
+  return {
+    command,
+    ok: true,
+    result: await providerWorker(cwd, rest[0]!),
+  };
+}
+
+/** Test-only seam proving the hidden command selects the async worker. */
+export function createAsyncCliDispatcherForTesting(
+  providerWorker: typeof runProviderWorkerAsync,
+): (args: string[], cwd: string) => Promise<CommandResult> {
+  return (args, cwd) => dispatchAsync(args, cwd, providerWorker);
 }
 
 function hasTerminalJsonOutputFlag(argv: string[]): boolean {
@@ -2885,11 +2942,6 @@ function usageText(): string {
     '  pnpm workflow audit verify <repository-id> --audit-root <absolute-external-path> [--json]',
     '  pnpm workflow run-check <check-id> [--json]',
     '  pnpm workflow ci --base <commit> --head <commit> [--input <integration-review.json>] [--json]',
-    '  pnpm workflow authority-plan prepare --intent <intent.json> [--json]',
-    '  pnpm workflow authority-plan status <plan-id> [--json]',
-    '  pnpm workflow authority-plan approve-and-apply <plan-id> [--json]',
-    '  pnpm workflow authority-plan resume <plan-id> [--json]',
-    '  pnpm workflow authority-plan attest <plan-id> [--json]',
     '  pnpm workflow adapter evaluate [--json]',
     '  pnpm workflow adapter availability-pilot --record <workflow/provider-availability-pilots/name.json> [--json]',
     '  pnpm workflow adapter verify-availability-pilot --record <workflow/provider-availability-pilots/name.json> [--json]',
@@ -2994,6 +3046,8 @@ if (entryPath && import.meta.url === pathToFileURL(entryPath).href) {
       process.exitCode = exitCode;
     });
   } else {
-    process.exitCode = runCli(argv);
+    void runCliAsync(argv).then((exitCode) => {
+      process.exitCode = exitCode;
+    });
   }
 }

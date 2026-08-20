@@ -7,7 +7,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { loadAiAdapterPolicy } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
+import {
+  AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
+  loadAiAdapterPolicy,
+} from '../src/runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   loadChangeContract,
@@ -8221,6 +8224,7 @@ function authorizeProviderRetryFixture(
     ),
     replacementRequest,
     replacementExecutionPolicy: executionPolicy,
+    dataAuthorizationPolicyPort: AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
   });
   assert.equal(authorization.decision.retryable, true);
   assert.equal(authorization.decision.automatic, true);

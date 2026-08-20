@@ -1,0 +1,20 @@
+{
+  "name": "@jigwright/agent-runtime",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bounded-provider-process": "./src/bounded-provider-process.ts",
+    "./harness-jsonl-v1": "./src/harness-jsonl-v1.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@jigwright/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3"
+  }
+}

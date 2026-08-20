@@ -16,6 +16,8 @@ import {
 test('archive transition persists evidence, applies exact staging, commits, and is idempotent', () => {
   const repository = completedFixture(addedDelta());
   try {
+    const bindingPath = 'workflow/change-providers/demo-change.json';
+    const bindingBefore = fs.readFileSync(path.join(repository, bindingPath));
     const before = git(repository, ['rev-parse', 'HEAD']).trim();
     const committed = commitArchiveTransition(repository, 'demo-change');
 
@@ -23,6 +25,11 @@ test('archive transition persists evidence, applies exact staging, commits, and 
     assert.notEqual(committed.commitHash, before);
     assert.match(committed.reportId, /^[0-9a-f]{64}$/);
     assert.equal(git(repository, ['status', '--porcelain']), '');
+    assert.deepEqual(
+      fs.readFileSync(path.join(repository, bindingPath)),
+      bindingBefore,
+    );
+    assert.equal(committed.changedPaths.includes(bindingPath), false);
     assert.equal(
       fs.existsSync(path.join(repository, 'openspec/changes/demo-change')),
       false,

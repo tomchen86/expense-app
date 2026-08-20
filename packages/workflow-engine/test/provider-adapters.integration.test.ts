@@ -16,7 +16,10 @@ import {
 } from '../src/adapters/providers/codex/codex-provider-adapter.ts';
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import { DEFAULT_AI_ADAPTER_RETRY_ACCOUNTING } from '../src/runtime/provider-execution/ai-adapter-policy.ts';
-import { createProviderExecutionEnvironment } from '../src/runtime/provider-execution/execution-environment.ts';
+import {
+  createProviderExecutionEnvironment,
+  createTrustedExecutionEnvironment,
+} from '../src/runtime/provider-execution/execution-environment.ts';
 import {
   buildContextManifest,
   inspectDurableEpochContextStore,
@@ -57,6 +60,7 @@ import {
   type ProviderRunInput,
   type ProviderRunnerHost,
 } from '../src/runtime/provider-execution/provider-runner.ts';
+import { spawnBoundedProviderProcess } from '../src/runtime/provider-execution/bounded-provider-process.ts';
 import {
   createFixtureRepository,
   git,
@@ -85,6 +89,11 @@ const PROVIDER_SCHEMA = {
     },
   },
 } as const;
+
+const providerWrapperFixture = path.join(
+  import.meta.dirname,
+  'fixtures/provider-wrapper-fixture.mjs',
+);
 
 test('built-in adapters publish fixed candidates and capability-specific argv', () => {
   assert.deepEqual(CODEX_EXECUTABLE_CANDIDATES.darwin, [
@@ -289,8 +298,11 @@ test('provider environments preserve only reviewed provider-specific auth contex
       assert.equal(environment.TERM, 'dumb');
       assert.equal(environment.CI, '1');
       assert.equal(environment.GIT_PAGER, 'cat');
+      assert.equal(environment.GIT_ATTR_NOSYSTEM, '1');
       assert.equal(environment.PATH?.includes('/tmp/fake-provider-bin'), false);
     }
+
+    assert.equal(createTrustedExecutionEnvironment().GIT_ATTR_NOSYSTEM, '1');
 
     const rejectedRelativeHome = createProviderExecutionEnvironment(
       'claude',
@@ -906,6 +918,146 @@ test('runner wraps provider-native output only after unchanged governed projecti
       assert.equal(stats.isSymbolicLink(), false);
       assert.equal(stats.mode & 0o777, 0o600);
     }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('async runner uses the async execution host while preserving single-shot validation', async () => {
+  const fixture = createRunnerFixture();
+  const activity: string[] = [];
+  try {
+    const host = claudeRunnerHost(() => {
+      assert.fail(
+        'the async runner must not fall back to synchronous execution',
+      );
+    });
+    host.executeAsync = async (input, control) => {
+      assert.ok(Buffer.isBuffer(input.stdinContent));
+      assert.equal(control.wrapperProtocol, undefined);
+      control.onActivity?.({ type: 'spawned', elapsedMs: 0 });
+      await Promise.resolve();
+      control.onActivity?.({ type: 'stdout', elapsedMs: 1, bytes: 10 });
+      return {
+        ...successfulProbe(
+          JSON.stringify({
+            type: 'result',
+            subtype: 'success',
+            structured_output: semanticOutput(fixture.request),
+          }),
+        ),
+        elapsedMs: 12,
+      };
+    };
+
+    const report = await createProviderRunnerForTesting(host).runAsync(
+      fixture.input,
+      {
+        platform: 'darwin',
+        onActivity(event) {
+          activity.push(event.type);
+        },
+      },
+    );
+
+    assert.deepEqual(report.semanticOutput, semanticOutput(fixture.request));
+    assert.equal(report.assurance, 'unchanged-governed-projection');
+    assert.deepEqual(activity, ['spawned', 'stdout']);
+    assert.deepEqual(
+      fs.readdirSync(
+        path.join(
+          fixture.repository,
+          '.git',
+          'workflow-engine',
+          'investigations',
+          'provider-slots',
+        ),
+      ),
+      [],
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('async runner consumes harness-jsonl-v1 only after explicit adapter opt-in', async () => {
+  const fixture = createRunnerFixture();
+  const input = {
+    ...bindRunnerInputToInvestigationOwner(
+      fixture.input,
+      'investigation-provider-wrapper-fixture',
+    ),
+    wrapperProtocol: { protocol: 'harness-jsonl-v1' as const },
+  };
+  try {
+    const host = claudeRunnerHost(() => {
+      assert.fail('wrapper protocol execution must remain asynchronous');
+    });
+    host.executeAsync = async (executeInput, control) => {
+      assert.equal(control.wrapperProtocol?.protocol, 'harness-jsonl-v1');
+      fs.writeFileSync(
+        path.join(
+          fixture.input.invocationDirectory,
+          'runtime',
+          'semantic-output.json',
+        ),
+        canonicalJson(semanticOutput(fixture.request)),
+      );
+      return await spawnBoundedProviderProcess({
+        executable: process.execPath,
+        args: [providerWrapperFixture, 'success'],
+        cwd: executeInput.cwd,
+        environment: executeInput.environment,
+        timeoutMs: executeInput.timeoutMs,
+        maxOutputBytes: executeInput.maxOutputBytes,
+        wrapperProtocol: control.wrapperProtocol!,
+      });
+    };
+
+    const report = await createProviderRunnerForTesting(host).runAsync(input, {
+      platform: 'darwin',
+    });
+
+    assert.deepEqual(report.semanticOutput, semanticOutput(fixture.request));
+    assert.equal(report.wrapperProtocolReceipt?.terminal, 'result');
+    assert.equal(
+      report.wrapperProtocolReceipt?.attemptId,
+      input.acceptanceBinding!.executionAttemptId,
+    );
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('async runner releases its concurrency slot after execution rejects', async () => {
+  const fixture = createRunnerFixture();
+  const expected = new Error('async execution failed');
+  try {
+    const host = claudeRunnerHost(() => {
+      assert.fail('the async runner must not use synchronous execution');
+    });
+    host.executeAsync = async () => {
+      throw expected;
+    };
+
+    await assert.rejects(
+      createProviderRunnerForTesting(host).runAsync(fixture.input, {
+        platform: 'darwin',
+      }),
+      expected,
+    );
+    assert.deepEqual(
+      fs.readdirSync(
+        path.join(
+          fixture.repository,
+          '.git',
+          'workflow-engine',
+          'investigations',
+          'provider-slots',
+        ),
+      ),
+      [],
+    );
   } finally {
     fixture.cleanup();
   }

@@ -18,8 +18,8 @@ import {
   type CollaborationGrantUseValidationOptions,
   type CollaborationReservationRecord,
 } from '../../runtime/storage-journal/collaboration-grant-store.ts';
+import type { GrantVerifierPort } from '../authority/grant-verifier-port.ts';
 import type { MaintainerPolicy } from '../authority/maintainer-policy.ts';
-import type { MaintainerSignerProvider } from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   isProviderId,
   requireProviderCapability,
@@ -252,7 +252,7 @@ const RECORDED_PARTICIPANT_KEYS = [
 export type DirectHumanReviewProof = {
   attestation: DirectHumanReviewAttestation;
   policy: MaintainerPolicy;
-  verifier: MaintainerSignerProvider;
+  verifier: GrantVerifierPort;
   now: Date;
   reviewNodeId: string;
   reviewResultDigest: string;

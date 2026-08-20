@@ -41,6 +41,17 @@ import {
   PATH_ROLES,
   type PathRole,
 } from '../../../../modules/source/path-role-registry.ts';
+import {
+  parseCheckCommand,
+  parseChecksConfigSource,
+  type CheckDefinition,
+  type ChecksConfig,
+  type ParsedCheckCommand,
+} from '../../../../modules/source/check-command.ts';
+import { planningProviderBindingPath } from '../../../../modules/source/planning-paths.ts';
+
+export { parseCheckCommand };
+export type { CheckDefinition, ChecksConfig, ParsedCheckCommand };
 
 const CHECK_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -64,31 +75,6 @@ export type TaskAuthorizationPolicy = {
   pathRoleRegistry: string;
   mandateRequiredRoles: PathRole[];
 };
-
-export type CheckDefinition = {
-  command: string[];
-  destructiveDatabase: boolean;
-  liveStderr?: boolean;
-};
-
-export type ChecksConfig = {
-  schemaVersion: 1;
-  checks: Record<string, CheckDefinition>;
-};
-
-export type ParsedCheckCommand =
-  | {
-      runner: 'node';
-      args: string[];
-      entrypoints: string[];
-    }
-  | {
-      runner: 'node-package-bin';
-      workspace: string;
-      packageName: string;
-      binName: string;
-      args: string[];
-    };
 
 export type TaskPolicy = {
   allowedPaths: string[];
@@ -487,140 +473,22 @@ function isTerminalCheckPolicyArray(
 export function loadChecksConfig(repositoryRoot: string): ChecksConfig {
   const checksPath = path.join(repositoryRoot, 'workflow/checks.json');
   const value = readJson(checksPath, 'check configuration');
-
-  if (
-    !isRecord(value) ||
-    value.schemaVersion !== 1 ||
-    !isRecord(value.checks)
-  ) {
+  const parsed = parseChecksConfigSource(value);
+  if (!parsed.ok && parsed.reason === 'invalid-registry') {
     throw invalidContract(
       'INVALID_CHECKS_CONFIG',
       'workflow/checks.json does not match schema version 1.',
       checksPath,
     );
   }
-
-  for (const [checkId, definition] of Object.entries(value.checks)) {
-    if (
-      !CHECK_ID_PATTERN.test(checkId) ||
-      !isRecord(definition) ||
-      !Object.keys(definition).every((key) =>
-        ['command', 'destructiveDatabase', 'liveStderr'].includes(key),
-      ) ||
-      !isStringArray(definition.command) ||
-      !parseCheckCommand(definition.command) ||
-      typeof definition.destructiveDatabase !== 'boolean' ||
-      (definition.liveStderr !== undefined &&
-        typeof definition.liveStderr !== 'boolean')
-    ) {
-      throw invalidContract(
-        'INVALID_CHECK_DEFINITION',
-        `Invalid check definition: ${checkId}`,
-        checksPath,
-      );
-    }
+  if (!parsed.ok) {
+    throw invalidContract(
+      'INVALID_CHECK_DEFINITION',
+      `Invalid check definition: ${parsed.checkId}`,
+      checksPath,
+    );
   }
-
-  return value as ChecksConfig;
-}
-
-export function parseCheckCommand(
-  command: string[],
-): ParsedCheckCommand | undefined {
-  if (
-    command.length < 2 ||
-    command.some(
-      (part) =>
-        part.trim() !== part ||
-        [...part].some((character) => {
-          const codePoint = character.codePointAt(0) ?? 0;
-          return codePoint <= 31 || codePoint === 127;
-        }),
-    )
-  ) {
-    return undefined;
-  }
-
-  if (command[0] === 'node') {
-    const args = command.slice(1);
-    const entrypoints = nodeEntrypoints(args);
-    return entrypoints ? { runner: 'node', args, entrypoints } : undefined;
-  }
-  if (command[0] !== 'node-package-bin' || command.length < 4) {
-    return undefined;
-  }
-
-  const [, workspace, packageName, binName, ...args] = command;
-  if (
-    (workspace !== '.' && !isExactPolicyPath(workspace)) ||
-    !isPackageName(packageName) ||
-    !isPackageSegment(binName)
-  ) {
-    return undefined;
-  }
-
-  return {
-    runner: 'node-package-bin',
-    workspace,
-    packageName,
-    binName,
-    args,
-  };
-}
-
-function nodeEntrypoints(args: string[]): string[] | undefined {
-  let entrypoints: string[];
-  if (args[0] === '--test') {
-    entrypoints = nodeTestEntrypoints(args, 1);
-  } else if (args[0] === '--experimental-strip-types' && args[1] === '--test') {
-    entrypoints = nodeTestEntrypoints(args, 2);
-  } else if (
-    args[0] === '--experimental-strip-types' &&
-    args[1] &&
-    !args[1].startsWith('-')
-  ) {
-    entrypoints = [args[1]];
-  } else {
-    if (!args[0] || args[0].startsWith('-')) {
-      return undefined;
-    }
-    entrypoints = [args[0]];
-  }
-
-  return entrypoints.length > 0 && entrypoints.every(isExactPolicyPath)
-    ? entrypoints
-    : undefined;
-}
-
-function nodeTestEntrypoints(args: string[], start: number): string[] {
-  return args.slice(args[start] === '--test-concurrency=4' ? start + 1 : start);
-}
-
-function isExactPolicyPath(value: string): boolean {
-  if (value.startsWith('-')) {
-    return false;
-  }
-  try {
-    normalizePolicyPath(value);
-    return value !== '.' && !value.endsWith('/**');
-  } catch {
-    return false;
-  }
-}
-
-function isPackageName(value: string): boolean {
-  if (value.length > 214) {
-    return false;
-  }
-  const segments = value.startsWith('@') ? value.slice(1).split('/') : [value];
-  return (
-    (segments.length === 1 || segments.length === 2) &&
-    segments.every(isPackageSegment)
-  );
-}
-
-function isPackageSegment(value: string): boolean {
-  return /^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$/.test(value);
+  return parsed.value;
 }
 
 export function loadChangeContract(
@@ -789,6 +657,12 @@ export function loadChangeContract(
       ? [investigationPath, executionPath, planReviewPath]
       : []),
     ...specPaths,
+    ...(fs.lstatSync(
+      path.join(repositoryRoot, planningProviderBindingPath(changeId)),
+      { throwIfNoEntry: false },
+    ) === undefined
+      ? []
+      : [path.join(repositoryRoot, planningProviderBindingPath(changeId))]),
     ...workflowContractArtifactPaths(repositoryRoot),
   ];
 

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
-  loadAiAdapterPolicy,
+  AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
   MAX_AI_ADAPTER_LIMITS,
 } from './ai-adapter-policy.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
@@ -32,8 +32,6 @@ import {
   compareGovernedProviderProjections,
   discoverRepository,
   runGit,
-  type GovernedProviderProjectionComparison,
-  type GovernedRuntimeInput,
 } from '../repository-transaction/git.ts';
 import {
   ensurePrivateInvestigationDirectory,
@@ -49,7 +47,6 @@ import {
   providerExecutionPolicySnapshotPath,
   readProviderExecutionPolicySnapshot,
   readProviderInvocationRequest,
-  type ProviderInvocationAcceptanceBinding,
 } from '../storage-journal/provider-invocation-store.ts';
 import type { ProviderId } from '../../modules/provider-orchestration/provider-registry.ts';
 import {
@@ -60,30 +57,32 @@ import {
 } from './provider-execution-governance.ts';
 import {
   assertProviderProcessSucceeded,
+  type ProviderExecutableIdentity,
   type ProviderInvocationPlan,
   type ProviderInvocationRequest,
-  type ProviderOutputValidator,
   type ProviderProcessOutcome,
+  type ProviderRunnerReport,
 } from '../../modules/provider-orchestration/provider-contracts.ts';
+import type {
+  AgentRuntimeAsyncSingleShotOptions,
+  AgentRuntimeGovernedInput,
+  AgentRuntimeProcessActivity,
+  AgentRuntimeSingleShotInput,
+  AgentRuntimeSingleShotOptions,
+  ProviderInvocationAcceptanceBinding,
+} from '../../modules/provider-orchestration/agent-runtime-port.ts';
+import {
+  ProviderWrapperProtocolError,
+  assertProviderWrapperProtocolReceipt,
+  type ProviderWrapperProtocolExecution,
+  type ProviderWrapperProtocolReceipt,
+} from '../../modules/provider-orchestration/agent-runtime-protocol.ts';
+import { spawnBoundedProviderProcess } from './bounded-provider-process.ts';
 
-/**
- * The canonical identity of a resolved provider executable: its reviewed
- * candidate path, the canonicalized real path, and the exact file metadata that
- * must remain stable across a launch. It is recorded so the engine can re-check
- * identity around the invocation rather than trusting a first-seen path.
- */
-export type ProviderExecutableIdentity = {
-  candidatePath: string;
-  realPath: string;
-  device: string;
-  inode: string;
-  mode: number;
-  uid: number;
-  gid: number;
-  size: number;
-  mtimeNs: string;
-  sha256: string;
-};
+export type {
+  ProviderExecutableIdentity,
+  ProviderRunnerReport,
+} from '../../modules/provider-orchestration/provider-contracts.ts';
 
 export type ProviderProbeInput = {
   executable: string;
@@ -99,6 +98,12 @@ export type ProviderExecuteInput = ProviderProbeInput & {
   stdinContent: Buffer;
 };
 
+export type ProviderAsyncExecutionControl = Readonly<{
+  signal?: AbortSignal;
+  onActivity?: (event: AgentRuntimeProcessActivity) => void;
+  wrapperProtocol?: ProviderWrapperProtocolExecution;
+}>;
+
 /**
  * The injectable host of real operating-system effects. Only the explicitly
  * named `createProviderRunnerForTesting` seam may substitute this; the
@@ -109,6 +114,10 @@ export type ProviderRunnerHost = {
   inspectCandidate(candidatePath: string): ProviderExecutableIdentity | null;
   runProbe(input: ProviderProbeInput): ProviderProcessOutcome;
   execute(input: ProviderExecuteInput): ProviderProcessOutcome;
+  executeAsync?(
+    input: ProviderExecuteInput,
+    control: ProviderAsyncExecutionControl,
+  ): Promise<ProviderProcessOutcome>;
 };
 
 export type ProviderPreflightOptions = {
@@ -133,45 +142,17 @@ export type ProviderResolution = {
   version?: string;
 };
 
-export type ProviderRunInput = {
-  providerId: ProviderId;
-  repositoryRoot: string;
-  invocationDirectory: string;
-  request: ProviderInvocationRequest;
+export type ProviderRunInput = Omit<
+  AgentRuntimeSingleShotInput,
+  'semanticOutputSchema' | 'acceptanceBinding' | 'reviewSnapshotRoot'
+> & {
   semanticOutputSchema: unknown;
-  outputValidator: ProviderOutputValidator;
-  governedRuntimeInputs: GovernedRuntimeInput[];
   acceptanceBinding?: ProviderInvocationAcceptanceBinding;
   reviewSnapshotRoot?: string | null;
-  sourceEnvironment: NodeJS.ProcessEnv;
 };
 
-export type ProviderRunOptions = {
-  platform: NodeJS.Platform;
-};
-
-/**
- * The non-durable execution observation the runner returns. It carries the
- * adapter-parsed semantic output bound to the request digest and the observed
- * governed projection equality, but it is not the durable authority: the
- * invocation store/lifecycle remains the owner of any durable
- * ProviderProcessResult. `sameUserProcessConfined` is always false and the
- * residuals retain the honest soft-containment caveats.
- */
-export type ProviderRunnerReport = {
-  invocationId: string;
-  providerId: ProviderId;
-  purpose: ProviderInvocationRequest['purpose'];
-  requestDigest: string;
-  semanticOutput: unknown;
-  semanticOutputDigest: string;
-  assurance: 'unchanged-governed-projection';
-  projection: GovernedProviderProjectionComparison;
-  sameUserProcessConfined: false;
-  residuals: string[];
-  executable: ProviderExecutableIdentity;
-  elapsedMs: number;
-};
+export type ProviderRunOptions = AgentRuntimeSingleShotOptions;
+export type ProviderAsyncRunOptions = AgentRuntimeAsyncSingleShotOptions;
 
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_OUTPUT_BYTES = 64 * 1024;
@@ -265,6 +246,10 @@ type ProviderRunner = {
     input: ProviderRunInput,
     options: ProviderRunOptions,
   ): ProviderRunnerReport;
+  runAsync(
+    input: ProviderRunInput,
+    options: ProviderAsyncRunOptions,
+  ): Promise<ProviderRunnerReport>;
 };
 
 /**
@@ -307,6 +292,23 @@ export function runBuiltInProvider(
     throw requestUnbound();
   }
   return createProviderRunner(realProviderRunnerHost()).run(input, options);
+}
+
+/**
+ * Async production launch preserving the exact single-shot validation and
+ * projection contract while replacing only the model process wait with spawn.
+ */
+export async function runBuiltInProviderAsync(
+  input: ProviderRunInput,
+  options: ProviderAsyncRunOptions,
+): Promise<ProviderRunnerReport> {
+  if (input.acceptanceBinding === undefined) {
+    throw requestUnbound();
+  }
+  return await createProviderRunner(realProviderRunnerHost()).runAsync(
+    input,
+    options,
+  );
 }
 
 function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
@@ -413,6 +415,42 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
     input: ProviderRunInput,
     options: ProviderRunOptions,
   ): ProviderRunnerReport {
+    if (input.wrapperProtocol !== undefined) {
+      throw wrapperProtocolAsyncRequired();
+    }
+    const result = runWithExecution(input, options, host.execute);
+    if (isPromiseLike(result)) {
+      throw new TypeError('Synchronous provider execution returned a promise.');
+    }
+    return result;
+  }
+
+  async function runAsync(
+    input: ProviderRunInput,
+    options: ProviderAsyncRunOptions,
+  ): Promise<ProviderRunnerReport> {
+    if (host.executeAsync === undefined) {
+      throw new TypeError('Async provider execution host is unavailable.');
+    }
+    const wrapperProtocol = createWrapperProtocolExecution(input);
+    return await runWithExecution(input, options, (executeInput) =>
+      host.executeAsync!(executeInput, {
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.onActivity === undefined
+          ? {}
+          : { onActivity: options.onActivity }),
+        ...(wrapperProtocol === null ? {} : { wrapperProtocol }),
+      }),
+    );
+  }
+
+  function runWithExecution(
+    input: ProviderRunInput,
+    options: ProviderRunOptions,
+    execute: (
+      executeInput: ProviderExecuteInput,
+    ) => ProviderProcessOutcome | Promise<ProviderProcessOutcome>,
+  ): ProviderRunnerReport | Promise<ProviderRunnerReport> {
     const git = discoverRepository(input.repositoryRoot);
     const config = loadWorkflowConfig(input.repositoryRoot);
     if (
@@ -515,7 +553,10 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
     //    baseline, then load the separately durable per-Attempt execution policy.
     //    This lets a retry adopt newly authorized execution limits without
     //    rebasing the repository content it is reviewing.
-    const baselinePolicy = loadAiAdapterPolicy(input.repositoryRoot);
+    const baselinePolicy =
+      AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT.readCurrent(
+        input.repositoryRoot,
+      );
     if (
       fileDigestAtBaseline(
         input.repositoryRoot,
@@ -564,6 +605,7 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
       loaded.policy.limits.maxConcurrent,
       invocationId,
     );
+    let releaseSynchronously = true;
     try {
       // 5. Create a fresh private runtime directory and engine files with
       //    exclusive no-follow 0600 single-link ownership so a preplanted
@@ -593,7 +635,7 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
       // The engine prompt and schema are automatically part of the governed
       // runtime-input fingerprint, so a provider that mutates either is observed
       // as drift and can never yield a successful result.
-      const governedRuntimeInputs: GovernedRuntimeInput[] = [
+      const governedRuntimeInputs: AgentRuntimeGovernedInput[] = [
         ...input.governedRuntimeInputs,
         ...(input.acceptanceBinding === undefined
           ? []
@@ -671,7 +713,7 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
         input.sourceEnvironment,
       );
 
-      const outcome = host.execute({
+      const outcome = execute({
         executable: plan.executable,
         args: plan.args,
         cwd: plan.cwd,
@@ -682,68 +724,100 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
         maxOutputBytes: input.request.limits.aggregateOutputBytes,
       });
 
-      if (input.acceptanceBinding !== undefined) {
-        assertProviderPromptContextCurrent(
-          contextStoreRoot,
-          input.acceptanceBinding.context,
+      const finalizeOutcome = (
+        completedOutcome: ProviderProcessOutcome,
+      ): ProviderRunnerReport => {
+        if (input.acceptanceBinding !== undefined) {
+          assertProviderPromptContextCurrent(
+            contextStoreRoot,
+            input.acceptanceBinding.context,
+          );
+        }
+
+        // Re-check executable identity around the launch.
+        const identityAfter = host.inspectCandidate(
+          identityBefore.candidatePath,
         );
-      }
+        if (!identityAfter || !sameIdentity(identityBefore, identityAfter)) {
+          throw executableIdentityDrift();
+        }
 
-      // Re-check executable identity around the launch.
-      const identityAfter = host.inspectCandidate(identityBefore.candidatePath);
-      if (!identityAfter || !sameIdentity(identityBefore, identityAfter)) {
-        throw executableIdentityDrift();
-      }
+        const after = captureGovernedProviderProjection(
+          input.repositoryRoot,
+          governedRuntimeInputs,
+        );
+        const projection = compareGovernedProviderProjections(before, after);
 
-      const after = captureGovernedProviderProjection(
-        input.repositoryRoot,
-        governedRuntimeInputs,
-      );
-      const projection = compareGovernedProviderProjections(before, after);
+        enforceProcessOutcome(completedOutcome, input.request.limits.timeoutMs);
+        enforceRawOutputLimit(
+          completedOutcome,
+          input.request.limits.aggregateOutputBytes,
+        );
 
-      enforceProcessOutcome(outcome, input.request.limits.timeoutMs);
-      enforceRawOutputLimit(outcome, input.request.limits.aggregateOutputBytes);
+        if (!projection.unchanged) {
+          throw governedProjectionDrift(projection.changedCategories);
+        }
 
-      if (!projection.unchanged) {
-        throw governedProjectionDrift(projection.changedCategories);
-      }
+        const wrapperProtocolReceipt = readWrapperProtocolReceipt(
+          input,
+          completedOutcome,
+        );
 
-      const semanticOutput = readNativeSemanticOutput(
-        input.providerId,
-        outcome,
-        semanticOutputPath,
-        input.request.limits.aggregateOutputBytes,
-      );
-      validateSemanticOutput(input, semanticOutput);
+        const semanticOutput =
+          wrapperProtocolReceipt === null
+            ? readNativeSemanticOutput(
+                input.providerId,
+                completedOutcome,
+                semanticOutputPath,
+                input.request.limits.aggregateOutputBytes,
+              )
+            : readWrapperSemanticOutput(
+                completedOutcome,
+                semanticOutputPath,
+                input.request.limits.aggregateOutputBytes,
+              );
+        validateSemanticOutput(input, semanticOutput);
 
-      const report: ProviderRunnerReport = {
-        invocationId: input.request.invocationId,
-        providerId: input.providerId,
-        purpose: input.request.purpose,
-        requestDigest: input.request.requestDigest,
-        semanticOutput,
-        semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
-        assurance: 'unchanged-governed-projection',
-        projection,
-        sameUserProcessConfined: false,
-        residuals: [...PROVIDER_RUNNER_RESIDUALS],
-        executable: identityAfter,
-        elapsedMs: outcome.elapsedMs,
+        const report: ProviderRunnerReport = {
+          invocationId: input.request.invocationId,
+          providerId: input.providerId,
+          purpose: input.request.purpose,
+          requestDigest: input.request.requestDigest,
+          semanticOutput,
+          semanticOutputDigest: sha256(canonicalJson(semanticOutput)),
+          assurance: 'unchanged-governed-projection',
+          projection,
+          sameUserProcessConfined: false,
+          residuals: [...PROVIDER_RUNNER_RESIDUALS],
+          executable: identityAfter,
+          elapsedMs: completedOutcome.elapsedMs,
+          ...(wrapperProtocolReceipt === null
+            ? {}
+            : { wrapperProtocolReceipt }),
+        };
+        return deepFreeze(report);
       };
-      return deepFreeze(report);
+
+      if (isPromiseLike(outcome)) {
+        releaseSynchronously = false;
+        return Promise.resolve(outcome)
+          .then(finalizeOutcome)
+          .finally(slot.release);
+      }
+      return finalizeOutcome(outcome);
     } finally {
-      slot.release();
+      if (releaseSynchronously) slot.release();
     }
   }
 
-  return { preflight, run };
+  return { preflight, run, runAsync };
 }
 
 function providerAcceptanceGovernedRuntimeInputs(
   paths: InvestigationRuntimePaths,
   binding: ProviderInvocationAcceptanceBinding,
-): GovernedRuntimeInput[] {
-  const inputs: GovernedRuntimeInput[] = [
+): AgentRuntimeGovernedInput[] {
+  const inputs: AgentRuntimeGovernedInput[] = [
     {
       id: 'engine-durable-execution-job',
       path: executionJobStatePath(paths, binding.executionJobId),
@@ -764,6 +838,24 @@ function providerAcceptanceGovernedRuntimeInputs(
     });
   }
   return inputs;
+}
+
+function createWrapperProtocolExecution(
+  input: ProviderRunInput,
+): ProviderWrapperProtocolExecution | null {
+  if (input.wrapperProtocol === undefined) return null;
+  if (input.wrapperProtocol.protocol !== 'harness-jsonl-v1') {
+    throw wrapperProtocolInvalid();
+  }
+  if (input.acceptanceBinding === undefined) throw requestUnbound();
+  return Object.freeze({
+    protocol: 'harness-jsonl-v1' as const,
+    binding: Object.freeze({
+      invocationId: input.request.invocationId,
+      requestDigest: input.request.requestDigest,
+      attemptId: input.acceptanceBinding.executionAttemptId,
+    }),
+  });
 }
 
 function buildInvocationPlan(
@@ -1138,6 +1230,71 @@ function readNativeSemanticOutput(
     nativeBytes +
     Buffer.byteLength(normalized, 'utf8');
   if (aggregate > aggregateOutputBytes) {
+    throw outputLimitExceeded();
+  }
+  return output;
+}
+
+function readWrapperProtocolReceipt(
+  input: ProviderRunInput,
+  outcome: ProviderProcessOutcome,
+): ProviderWrapperProtocolReceipt | null {
+  if (input.wrapperProtocol === undefined) {
+    if (outcome.wrapperProtocolReceipt !== undefined) {
+      throw wrapperProtocolInvalid();
+    }
+    return null;
+  }
+  if (input.acceptanceBinding === undefined) throw requestUnbound();
+  let receipt: ProviderWrapperProtocolReceipt;
+  try {
+    receipt = assertProviderWrapperProtocolReceipt(
+      outcome.wrapperProtocolReceipt,
+      {
+        invocationId: input.request.invocationId,
+        requestDigest: input.request.requestDigest,
+        attemptId: input.acceptanceBinding.executionAttemptId,
+      },
+    );
+  } catch (error) {
+    if (error instanceof ProviderWrapperProtocolError) {
+      throw wrapperProtocolInvalid();
+    }
+    throw error;
+  }
+  if (receipt.terminal === 'error') throw wrapperReportedError();
+  if (receipt.terminal !== 'result' || receipt.outputSlot !== 'primary') {
+    throw wrapperProtocolInvalid();
+  }
+  return receipt;
+}
+
+function readWrapperSemanticOutput(
+  outcome: ProviderProcessOutcome,
+  semanticOutputPath: string,
+  aggregateOutputBytes: number,
+): unknown {
+  const stdoutBytes = Buffer.byteLength(outcome.stdout, 'utf8');
+  const stderrBytes = Buffer.byteLength(outcome.stderr, 'utf8');
+  const file = readCodexSemanticFile(
+    semanticOutputPath,
+    stdoutBytes + stderrBytes,
+    aggregateOutputBytes,
+  );
+  const output = parseJsonOrInvalid(file.content);
+  let normalized: string;
+  try {
+    normalized = canonicalJson(output);
+  } catch {
+    throw nativeOutputInvalid();
+  }
+  if (
+    stdoutBytes +
+      stderrBytes +
+      file.bytes +
+      Buffer.byteLength(normalized, 'utf8') >
+    aggregateOutputBytes
+  ) {
     throw outputLimitExceeded();
   }
   return output;
@@ -1700,6 +1857,23 @@ function realProviderRunnerHost(): ProviderRunnerHost {
     inspectCandidate: inspectRealCandidate,
     runProbe: (input) => spawnBoundedProcess(input),
     execute: (input) => spawnBoundedProcess(input, input.stdinContent),
+    executeAsync: (input, control) =>
+      spawnBoundedProviderProcess({
+        executable: input.executable,
+        args: input.args,
+        cwd: input.cwd,
+        environment: input.environment,
+        stdinContent: input.stdinContent,
+        timeoutMs: input.timeoutMs,
+        maxOutputBytes: input.maxOutputBytes,
+        ...(control.signal === undefined ? {} : { signal: control.signal }),
+        ...(control.onActivity === undefined
+          ? {}
+          : { onActivity: control.onActivity }),
+        ...(control.wrapperProtocol === undefined
+          ? {}
+          : { wrapperProtocol: control.wrapperProtocol }),
+      }),
   };
 }
 
@@ -1937,6 +2111,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'then' in value &&
+    typeof value.then === 'function'
+  );
+}
+
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && 'code' in error;
 }
@@ -1970,6 +2153,30 @@ function requestUnbound(): WorkflowError {
     'PROVIDER_REQUEST_UNBOUND',
     'Provider invocation input is not bound to the request provider.',
     ExitCode.guard,
+  );
+}
+
+function wrapperProtocolAsyncRequired(): WorkflowError {
+  return workflowError(
+    'PROVIDER_WRAPPER_PROTOCOL_ASYNC_REQUIRED',
+    'Provider wrapper protocol execution requires the asynchronous Agent Runtime path.',
+    ExitCode.guard,
+  );
+}
+
+function wrapperProtocolInvalid(): WorkflowError {
+  return workflowError(
+    'PROVIDER_WRAPPER_PROTOCOL_INVALID',
+    'Provider wrapper protocol evidence is missing, malformed, or does not match the bound invocation.',
+    ExitCode.guard,
+  );
+}
+
+function wrapperReportedError(): WorkflowError {
+  return workflowError(
+    'PROVIDER_WRAPPER_REPORTED_ERROR',
+    'Provider wrapper reported a terminal execution error.',
+    ExitCode.verification,
   );
 }
 

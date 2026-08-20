@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
-  COLLABORATION_GRANT_SIGNATURE_NAMESPACE,
+  COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE,
   collaborationGrantEnvelopeDigest,
   collaborationPolicyDigestForPhase,
   issueCollaborationGrant,
@@ -107,9 +107,16 @@ test('selects an authenticated caller grant and exactly replays its durable rese
         }),
       ),
     );
+    const inspection = inspectCollaborationGrants(common, issued.grantId)[0];
+    assert.equal(inspection?.state, 'reserved');
+    assert.equal(inspection?.version, 2);
     assert.equal(
-      inspectCollaborationGrants(common, issued.grantId)[0]?.state,
-      'reserved',
+      inspection?.signatureNamespace,
+      COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE,
+    );
+    assert.equal(
+      inspection?.authorizedEffect,
+      'role-independence-degradation-only',
     );
     const reservedPath = path.join(paths.reserved, `${issued.grantId}.json`);
     const durableBytes = fs.readFileSync(reservedPath, 'utf8');
@@ -685,11 +692,11 @@ function fixtureSigner(): MaintainerSignerProvider {
       return 'fixture-maintainer';
     },
     sign(payload, namespace) {
-      assert.equal(namespace, COLLABORATION_GRANT_SIGNATURE_NAMESPACE);
+      assert.equal(namespace, COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE);
       return fixtureSignature(payload, namespace);
     },
     verify(payload, signature, identity, namespace) {
-      assert.equal(namespace, COLLABORATION_GRANT_SIGNATURE_NAMESPACE);
+      assert.equal(namespace, COLLABORATION_GRANT_V2_SIGNATURE_NAMESPACE);
       if (
         identity !== 'fixture-maintainer' ||
         signature !== fixtureSignature(payload, namespace)

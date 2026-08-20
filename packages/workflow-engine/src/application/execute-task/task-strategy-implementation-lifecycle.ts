@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 
-import { parseAiAdapterPolicyDocument } from '../../runtime/provider-execution/ai-adapter-policy.ts';
+import {
+  AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
+  parseAiAdapterPolicyDocument,
+} from '../../runtime/provider-execution/ai-adapter-policy.ts';
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   bindingFromPayload,
@@ -33,10 +36,8 @@ import {
   loadInvestigationRuntimeContext,
 } from '../../composition-root/lifecycle-context.ts';
 import { parseMaintainerPolicy } from '../../modules/authority/maintainer-policy.ts';
-import {
-  createInteractiveSshSigner,
-  type MaintainerSignerProvider,
-} from '../../adapters/signing/ssh/maintainer-signer.ts';
+import type { GrantVerifierPort } from '../../modules/authority/grant-verifier-port.ts';
+import { createInteractiveSshSigner } from '../../adapters/signing/ssh/maintainer-signer.ts';
 import { createProviderInvocationRequest } from '../../modules/provider-orchestration/provider-contracts.ts';
 import {
   createProviderInvocation,
@@ -139,7 +140,7 @@ export type BeginTaskStrategyImplementationOptions = Readonly<{
   collaborationGrant?: Readonly<{
     grantId: string;
     now?: Date;
-    verifier?: MaintainerSignerProvider;
+    verifier?: GrantVerifierPort;
     callerSupplied?: Readonly<{
       callerId: string;
       assurance: 'self-declared' | 'runtime-hint' | 'adapter-assigned';
@@ -1100,6 +1101,7 @@ function reserveProviderRetryAttempt(
     failedRequest: failedAttempt.request,
     replacementRequest,
     replacementExecutionPolicy: policy,
+    dataAuthorizationPolicyPort: AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
   });
   let strategyChanges: string[] = [];
   if (authorization.decision.retryMode === 'strategy-change') {
@@ -1139,6 +1141,7 @@ function reserveProviderRetryAttempt(
       failedRequest: failedAttempt.request,
       replacementRequest,
       replacementExecutionPolicy: policy,
+      dataAuthorizationPolicyPort: AI_ADAPTER_DATA_AUTHORIZATION_POLICY_PORT,
     });
   } else if (options.collaborationGrant !== undefined) {
     if (

@@ -24,6 +24,15 @@ import {
   type WorkflowError,
 } from '../../foundation/errors/errors.ts';
 import type { TaskMandateBinding } from './task-mandate.ts';
+import type {
+  ContextManifest,
+  ContextManifestItemReference,
+} from '../lifecycle/context-manifest-contract.ts';
+
+export type {
+  ContextManifest,
+  ContextManifestItemReference,
+} from '../lifecycle/context-manifest-contract.ts';
 
 export const EXECUTION_BUDGET_GRANT_SIGNATURE_NAMESPACE =
   'HARNESS_EXECUTION_BUDGET_GRANT_V1';
@@ -1119,25 +1128,6 @@ export function parseRepairBudget(raw: string): RepairBudget {
     );
   }
 }
-
-export type ContextManifestItemReference = {
-  identity: string;
-  digest: string;
-};
-
-export type ContextManifest = {
-  schemaVersion: 1;
-  kind: 'epoch-context-manifest';
-  workflowId: string;
-  epoch: number;
-  contractVersion: number;
-  baselineDigest: string;
-  intentDigest: string;
-  termSetDigest: string;
-  planningSnapshotDigest: string;
-  contextDigest: string;
-  items: ContextManifestItemReference[];
-};
 
 export function buildContextManifest(input: {
   workflowId: string;

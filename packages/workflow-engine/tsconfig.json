@@ -7,7 +7,36 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "types": ["node"],
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": {
+      "@jigwright/agent-runtime": ["../agent-runtime/src/index.ts"],
+      "@jigwright/agent-runtime/bounded-provider-process": [
+        "../agent-runtime/src/bounded-provider-process.ts"
+      ],
+      "@jigwright/agent-runtime/harness-jsonl-v1": [
+        "../agent-runtime/src/harness-jsonl-v1.ts"
+      ],
+      "@jigwright/core/canonical-json": ["../core/src/canonical-json.ts"],
+      "@jigwright/core/check-command": ["../core/src/check-command.ts"],
+      "@jigwright/core/check-registry-port": [
+        "../core/src/check-registry-port.ts"
+      ],
+      "@jigwright/core/contract-values": ["../core/src/contract-values.ts"],
+      "@jigwright/core/job-attempt-runtime": [
+        "../core/src/job-attempt-runtime.ts"
+      ],
+      "@jigwright/core/repository-path": ["../core/src/repository-path.ts"],
+      "@jigwright/core/tracked-object-reader-port": [
+        "../core/src/tracked-object-reader-port.ts"
+      ],
+      "@jigwright/grants/collaboration-grant-envelope-reader": [
+        "../grants/src/collaboration-grant-envelope-reader.ts"
+      ],
+      "@jigwright/grants/grant-envelope-verifier": [
+        "../grants/src/grant-envelope-verifier.ts"
+      ],
+      "@jigwright/grants/grant-lifecycle": ["../grants/src/grant-lifecycle.ts"]
+    }
   },
   "include": ["bootstrap/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }

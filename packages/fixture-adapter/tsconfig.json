@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "skipLibCheck": true,
+    "paths": {
+      "@jigwright/core/canonical-json": ["../core/src/canonical-json.ts"],
+      "@jigwright/core/check-command": ["../core/src/check-command.ts"],
+      "@jigwright/core/check-registry-port": [
+        "../core/src/check-registry-port.ts"
+      ],
+      "@jigwright/core/contract-values": ["../core/src/contract-values.ts"],
+      "@jigwright/core/repository-path": ["../core/src/repository-path.ts"],
+      "@jigwright/core/tracked-object-reader-port": [
+        "../core/src/tracked-object-reader-port.ts"
+      ]
+    }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

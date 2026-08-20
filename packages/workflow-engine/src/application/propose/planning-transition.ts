@@ -36,10 +36,10 @@ import {
 } from '../../runtime/session-workspace/paths.ts';
 import {
   amendmentLeftWorkMarkedDone,
-  inspectPlanningTransition,
   taskStates,
   validateOpenSpecPlanning,
 } from '../../adapters/planning/openspec/documents/planning-contract.ts';
+import { inspectPlanningTransition } from '../../composition-root/planning-provider-production.ts';
 import {
   readPlanningTransitionReport,
   writePlanningTransitionReport,

@@ -1,6 +1,12 @@
 import crypto from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
+import type {
+  TrackedObjectEntryV1,
+  TrackedObjectReaderPortV1,
+  TrackedObjectSnapshotV1,
+} from '@jigwright/core/tracked-object-reader-port';
+
 import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.ts';
 import {
   createEvidenceNode,
@@ -16,7 +22,7 @@ import {
   type NormalizedInvestigationTerm,
 } from './investigation-terms.ts';
 import {
-  readPinnedTrackedTree,
+  workflowTrackedObjectReaderPort,
   type TrackedTreeEntry,
   type TrackedTreeOperationalDeadline,
   type TrackedTreePathIdentity,
@@ -250,6 +256,7 @@ export function scanInvestigationTreeFacts(request: {
    * merely convenient.
    */
   allowSaturatedTerms?: boolean;
+  trackedObjectReader?: TrackedObjectReaderPortV1;
 }): InvestigationScanFactsResult {
   const { repositoryRoot, treeOid, terms } = request;
   const allowSaturatedTerms = request.allowSaturatedTerms === true;
@@ -267,15 +274,18 @@ export function scanInvestigationTreeFacts(request: {
     expiresAtMonotonicMillis: performance.now() + limits.maxScanCpuMillis,
   };
   const scanCpuStart = process.cpuUsage();
-  const snapshot = readPinnedTrackedTree({
-    repositoryRoot,
-    treeOid,
-    limits: {
-      maxBlobBytes: limits.maxBlobBytes,
-      maxTotalScannedBytes: limits.maxTotalScannedBlobBytes,
+  const snapshot = readTrackedTreeForScan(
+    request.trackedObjectReader ?? workflowTrackedObjectReaderPort,
+    {
+      repositoryRoot,
+      treeOid,
+      limits: {
+        maxBlobBytes: limits.maxBlobBytes,
+        maxTotalScannedBytes: limits.maxTotalScannedBlobBytes,
+      },
+      operationalDeadline,
     },
-    operationalDeadline,
-  });
+  );
   assertOperationalScanBudget(
     operationalDeadline,
     scanCpuStart,
@@ -386,8 +396,81 @@ export function scanInvestigationTree(request: {
   terms: ScanInvestigationTerm[];
   limits?: InvestigationLimits;
   allowSaturatedTerms?: boolean;
+  trackedObjectReader?: TrackedObjectReaderPortV1;
 }): InvestigationScanResult {
   return adaptInvestigationScanFactsResult(scanInvestigationTreeFacts(request));
+}
+
+function readTrackedTreeForScan(
+  reader: TrackedObjectReaderPortV1,
+  request: Parameters<TrackedObjectReaderPortV1['readPinnedTree']>[0],
+): TrackedTreeSnapshot {
+  if (
+    reader?.contractVersion !== 'jigwright.tracked-object-reader-port.v1' ||
+    typeof reader.readPinnedTree !== 'function'
+  ) {
+    throw workflowError(
+      'TRACKED_OBJECT_READER_UNSUPPORTED',
+      'Tracked-object reader contract version is unsupported.',
+      ExitCode.guard,
+    );
+  }
+  const snapshot = reader.readPinnedTree(request);
+  if (
+    !isTrackedObjectSnapshot(snapshot) ||
+    snapshot.treeOid !== request.treeOid
+  ) {
+    throw workflowError(
+      'TRACKED_OBJECT_READER_INVALID',
+      'Tracked-object reader returned an invalid snapshot.',
+      ExitCode.guard,
+    );
+  }
+  return {
+    treeOid: snapshot.treeOid,
+    treeDigest: snapshot.treeDigest,
+    entries: snapshot.entries.map(adaptTrackedObjectEntry),
+    totalScannedBlobBytes: snapshot.totalScannedBlobBytes,
+    budgetExceeded: snapshot.budgetExceeded,
+  };
+}
+
+function adaptTrackedObjectEntry(
+  entry: TrackedObjectEntryV1,
+): TrackedTreeEntry {
+  return {
+    path: { rawBase64: entry.path.rawBase64, utf8: entry.path.utf8 },
+    objectId: entry.objectId,
+    objectType: entry.objectType,
+    mode: entry.mode,
+    byteSize: entry.byteSize,
+    ...(entry.content === undefined
+      ? {}
+      : {
+          content: Buffer.isBuffer(entry.content)
+            ? entry.content
+            : Buffer.from(entry.content),
+        }),
+    ...(entry.contentSha256 === undefined
+      ? {}
+      : { contentSha256: entry.contentSha256 }),
+    ...(entry.skipReason === undefined ? {} : { skipReason: entry.skipReason }),
+  };
+}
+
+function isTrackedObjectSnapshot(
+  value: TrackedObjectSnapshotV1,
+): value is TrackedObjectSnapshotV1 {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value.treeOid) &&
+    /^[0-9a-f]{64}$/.test(value.treeDigest) &&
+    Array.isArray(value.entries) &&
+    Number.isSafeInteger(value.totalScannedBlobBytes) &&
+    value.totalScannedBlobBytes >= 0 &&
+    typeof value.budgetExceeded === 'boolean'
+  );
 }
 
 /**

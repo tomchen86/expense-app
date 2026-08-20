@@ -2,6 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  GRANT_LIFECYCLE_CONTRACT_VERSION_V1,
+  GrantLifecycleTransitionError,
+  executeGrantLifecycleTransitionV1,
+} from '@jigwright/grants/grant-lifecycle';
+
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   COLLABORATION_GRANT_AUTHORIZED_EFFECT,
@@ -10,13 +16,16 @@ import {
   COLLABORATION_GRANT_RETAINED_OBLIGATIONS,
   assertCollaborationGrantId,
   canonicalCollaborationGrantEnvelope,
+  collaborationGrantSignatureNamespace,
   collaborationGrantEnvelopeDigest,
   directHumanReviewAttestationDigest,
   bindingFromPayload,
   parseCollaborationGrantEnvelope,
   parseDirectHumanReviewAttestation,
   validateCollaborationGrantEnvelope,
+  validateCollaborationGrantPayload,
   validateDirectHumanReviewAttestation,
+  verifyCollaborationGrantCapability,
   type CollaborationDegradedForm,
   type CollaborationGrantEnvelope,
   type CollaborationGrantExpectedBinding,
@@ -31,10 +40,8 @@ import {
   parseMaintainerPolicy,
   type MaintainerPolicy,
 } from '../../modules/authority/maintainer-policy.ts';
-import {
-  createInteractiveSshSigner,
-  type MaintainerSignerProvider,
-} from '../../adapters/signing/ssh/maintainer-signer.ts';
+import type { GrantVerifierPort } from '../../modules/authority/grant-verifier-port.ts';
+import { createInteractiveSshSigner } from '../../adapters/signing/ssh/maintainer-signer.ts';
 import {
   runtimePaths,
   withRepositoryLifecycleOperation,
@@ -145,6 +152,9 @@ export type CollaborationTerminalRecord = {
 
 export type CollaborationGrantInspection = {
   grantId: string;
+  version: CollaborationGrantEnvelope['payload']['version'];
+  signatureNamespace: ReturnType<typeof collaborationGrantSignatureNamespace>;
+  authorizedEffect: typeof COLLABORATION_GRANT_AUTHORIZED_EFFECT;
   state:
     'available' | 'reserved' | 'revoked' | 'consumed' | 'failed' | 'expired';
   changeId: string;
@@ -165,7 +175,7 @@ export type CollaborationReservationRequest = {
   transitionDigest: string;
   expected: CollaborationGrantExpectedBinding;
   now?: Date;
-  verifier?: MaintainerSignerProvider;
+  verifier?: GrantVerifierPort;
 };
 
 export type CollaborationGrantSelectionCoreBinding = Pick<
@@ -192,7 +202,7 @@ export type CollaborationGrantSelectionRequest = {
   expectedCore: CollaborationGrantSelectionCoreBinding;
   allowedDegradedForms: readonly CollaborationGrantSelectableDegradedForm[];
   now?: Date;
-  verifier?: MaintainerSignerProvider;
+  verifier?: GrantVerifierPort;
 };
 
 export type CollaborationGrantSelection = {
@@ -216,7 +226,7 @@ export type CollaborationGrantUseValidationOptions = {
   now: Date;
   expectedBinding: CollaborationGrantExpectedBinding;
   policy: MaintainerPolicy;
-  verifier: MaintainerSignerProvider;
+  verifier: GrantVerifierPort;
   transitionDigest: string;
   expectedAssignment: unknown;
   contentAdmission: CollaborationContentAdmission;
@@ -358,53 +368,104 @@ export function reserveCollaborationGrantUnderLifecycleLock(
   if (!fs.existsSync(availablePath)) {
     throw unavailableGrant(grantId);
   }
-  const envelope = readAvailable(availablePath, grantId);
+  const availableEnvelope = readAvailable(availablePath, grantId);
+  validateCollaborationGrantPayload(availableEnvelope.payload, policy, {
+    now,
+    expectedPolicyBlob: request.expected.policyBlob,
+    allowExpired: true,
+  });
   try {
-    validateCollaborationGrantEnvelope(envelope, policy, {
-      now,
-      expected: request.expected,
-      verifier,
-    });
-  } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      error.code === 'COLLABORATION_GRANT_EXPIRED'
-    ) {
-      const terminal: CollaborationTerminalRecord = {
-        schemaVersion: 1,
-        state: 'expired',
+    const transition = executeGrantLifecycleTransitionV1(
+      {
+        contractVersion: GRANT_LIFECYCLE_CONTRACT_VERSION_V1,
         grantId,
         transitionDigest,
-        reason: 'Grant expired before reservation',
-        recordedAt: now.toISOString(),
-        envelope,
-        use: null,
-      };
-      assertOwned();
-      createPrivateFileAtomic(terminalPath, serialize(terminal));
-      cleanupNonterminal(paths, grantId, envelope, transitionDigest);
+        maxUses: availableEnvelope.payload.maxUses,
+        event: {
+          kind: 'reserve',
+          expiresAt: availableEnvelope.payload.expiresAt,
+          reason: 'Grant reserved for exact collaboration transition',
+          expirationReason: 'Grant expired before reservation',
+        },
+        validate: () =>
+          verifyCollaborationGrantCapability(availableEnvelope, policy, {
+            now,
+            expected: request.expected,
+            verifier,
+            allowExpired: true,
+          }),
+      },
+      {
+        clock: { now: () => now },
+        storage: {
+          readState: () => 'available',
+          applyTransition(input) {
+            if (input.receipt.toState === 'expired') {
+              const terminal: CollaborationTerminalRecord = {
+                schemaVersion: 1,
+                state: 'expired',
+                grantId,
+                transitionDigest,
+                reason: input.receipt.reason,
+                recordedAt: input.receipt.occurredAt,
+                envelope: availableEnvelope,
+                use: null,
+              };
+              assertOwned();
+              createPrivateFileAtomic(terminalPath, serialize(terminal));
+              cleanupNonterminal(
+                paths,
+                grantId,
+                availableEnvelope,
+                transitionDigest,
+              );
+              return terminal;
+            }
+            if (
+              input.receipt.toState !== 'reserved' ||
+              input.validation === undefined
+            ) {
+              throw unavailableGrant(grantId);
+            }
+            const envelope = input.validation.envelope;
+            const record: CollaborationReservationRecord = {
+              schemaVersion: 1,
+              state: 'reserved',
+              grantId,
+              transitionDigest,
+              repositoryRoot: repository.repositoryRoot,
+              reservedAt: input.receipt.occurredAt,
+              envelope,
+            };
+            assertOwned();
+            const reservedPath = statePath(paths.reserved, grantId);
+            fs.renameSync(availablePath, reservedPath);
+            fsyncDirectory(paths.available);
+            fsyncDirectory(paths.reserved);
+            replacePrivateFileAtomic(reservedPath, serialize(record));
+            assertOwned();
+            return deepFreeze(record);
+          },
+        },
+      },
+    );
+    if (transition.value.state !== 'reserved') {
+      throw unavailableGrant(grantId);
+    }
+    return transition.value;
+  } catch (error) {
+    if (
+      error instanceof GrantLifecycleTransitionError &&
+      error.code === 'GRANT_LIFECYCLE_EXPIRED'
+    ) {
+      throw workflowError(
+        'COLLABORATION_GRANT_EXPIRED',
+        'Collaboration grant has expired.',
+        ExitCode.staleState,
+      );
     }
     throw error;
   }
-  assertOwned();
-  const record: CollaborationReservationRecord = {
-    schemaVersion: 1,
-    state: 'reserved',
-    grantId,
-    transitionDigest,
-    repositoryRoot: repository.repositoryRoot,
-    reservedAt: now.toISOString(),
-    envelope,
-  };
-  const reservedPath = statePath(paths.reserved, grantId);
-  fs.renameSync(availablePath, reservedPath);
-  fsyncDirectory(paths.available);
-  fsyncDirectory(paths.reserved);
-  replacePrivateFileAtomic(reservedPath, serialize(record));
-  assertOwned();
-  return deepFreeze(record);
 }
 
 /**
@@ -608,84 +669,113 @@ export function consumeCollaborationGrantUnderLifecycleLock(
   if (reservation.transitionDigest !== transitionDigest) {
     throw unavailableGrant(grantId);
   }
-  let assignment: CollaborationGrantedAssignmentRecord;
-  let structuredContent: CollaborationStructuredContent;
-  let directHumanReviewAttestation: DirectHumanReviewAttestation | null;
-  try {
-    assignment = assertGrantedAssignment(
-      request.assignment,
-      reservation.envelope,
-    );
-    const contentAdmission = assertContentAdmission(
-      request.contentAdmission,
-      reservation.envelope.payload.lifecyclePhase,
-    );
-    structuredContent = {
-      kind: contentAdmission.kind,
-      nodeId: contentAdmission.nodeId,
-      resultDigest: contentAdmission.resultDigest,
-    };
-    directHumanReviewAttestation = assertDirectHumanAttestationReference(
-      request.directHumanReviewAttestation ?? null,
-      assignment,
-      reservation.envelope,
-      transitionDigest,
-      structuredContent,
-    );
-  } catch (error) {
-    const failed: CollaborationTerminalRecord = {
-      schemaVersion: 1,
-      state: 'failed',
+  const transition = executeGrantLifecycleTransitionV1(
+    {
+      contractVersion: GRANT_LIFECYCLE_CONTRACT_VERSION_V1,
       grantId,
       transitionDigest,
-      reason: 'Exact role-result content admission failed',
-      recordedAt: exactDate(request.now ?? new Date()).toISOString(),
-      envelope: reservation.envelope,
-      use: null,
-    };
-    assertOwned();
-    createPrivateFileAtomic(terminalPath, serialize(failed));
-    cleanupNonterminal(paths, grantId, reservation.envelope, transitionDigest);
-    assertOwned();
-    throw error;
-  }
-  const use: CollaborationGrantUseProjection = {
-    schemaVersion: 1,
-    grantId,
-    signedEnvelopeDigest: collaborationGrantEnvelopeDigest(
-      reservation.envelope,
-    ),
-    transitionDigest,
-    reservedAt: reservation.reservedAt,
-    lifecyclePhase: reservation.envelope.payload.lifecyclePhase,
-    targetDigest: reservation.envelope.payload.targetDigest,
-    degradedForm: reservation.envelope.payload.degradedForm,
-    authorizedEffect: COLLABORATION_GRANT_AUTHORIZED_EFFECT,
-    assignment,
-    structuredContent,
-    contentAuthority: 'reference-only-requires-governing-validator',
-    directHumanReviewAttestation,
-    retainedObligations: COLLABORATION_GRANT_RETAINED_OBLIGATIONS,
-    replayScope: COLLABORATION_GRANT_REPLAY_SCOPE,
-    residuals: COLLABORATION_GRANT_RESIDUALS,
-    envelope: reservation.envelope,
-  };
-  const terminal: CollaborationTerminalRecord = {
-    schemaVersion: 1,
-    state: 'consumed',
-    grantId,
-    transitionDigest,
-    reason:
-      'Exact structured collaboration reference bound; governing validation remains required',
-    recordedAt: exactDate(request.now ?? new Date()).toISOString(),
-    envelope: reservation.envelope,
-    use,
-  };
-  assertOwned();
-  createPrivateFileAtomic(terminalPath, serialize(terminal));
-  cleanupNonterminal(paths, grantId, reservation.envelope, transitionDigest);
-  assertOwned();
-  return inspectTerminal(terminal);
+      maxUses: reservation.envelope.payload.maxUses,
+      event: {
+        kind: 'consume',
+        reason:
+          'Exact structured collaboration reference bound; governing validation remains required',
+      },
+      validationFailureReason: 'Exact role-result content admission failed',
+      validate() {
+        const assignment = assertGrantedAssignment(
+          request.assignment,
+          reservation.envelope,
+        );
+        const contentAdmission = assertContentAdmission(
+          request.contentAdmission,
+          reservation.envelope.payload.lifecyclePhase,
+        );
+        const structuredContent: CollaborationStructuredContent = {
+          kind: contentAdmission.kind,
+          nodeId: contentAdmission.nodeId,
+          resultDigest: contentAdmission.resultDigest,
+        };
+        const directHumanReviewAttestation =
+          assertDirectHumanAttestationReference(
+            request.directHumanReviewAttestation ?? null,
+            assignment,
+            reservation.envelope,
+            transitionDigest,
+            structuredContent,
+          );
+        const use: CollaborationGrantUseProjection = {
+          schemaVersion: 1,
+          grantId,
+          signedEnvelopeDigest: collaborationGrantEnvelopeDigest(
+            reservation.envelope,
+          ),
+          transitionDigest,
+          reservedAt: reservation.reservedAt,
+          lifecyclePhase: reservation.envelope.payload.lifecyclePhase,
+          targetDigest: reservation.envelope.payload.targetDigest,
+          degradedForm: reservation.envelope.payload.degradedForm,
+          authorizedEffect: COLLABORATION_GRANT_AUTHORIZED_EFFECT,
+          assignment,
+          structuredContent,
+          contentAuthority: 'reference-only-requires-governing-validator',
+          directHumanReviewAttestation,
+          retainedObligations: COLLABORATION_GRANT_RETAINED_OBLIGATIONS,
+          replayScope: COLLABORATION_GRANT_REPLAY_SCOPE,
+          residuals: COLLABORATION_GRANT_RESIDUALS,
+          envelope: reservation.envelope,
+        };
+        return use;
+      },
+    },
+    {
+      clock: { now: () => exactDate(request.now ?? new Date()) },
+      storage: {
+        readState: () => 'reserved',
+        applyTransition(input) {
+          let terminal: CollaborationTerminalRecord;
+          if (input.receipt.toState === 'failed') {
+            terminal = {
+              schemaVersion: 1,
+              state: 'failed',
+              grantId,
+              transitionDigest,
+              reason: input.receipt.reason,
+              recordedAt: input.receipt.occurredAt,
+              envelope: reservation.envelope,
+              use: null,
+            };
+          } else if (
+            input.receipt.toState === 'consumed' &&
+            input.validation !== undefined
+          ) {
+            terminal = {
+              schemaVersion: 1,
+              state: 'consumed',
+              grantId,
+              transitionDigest,
+              reason: input.receipt.reason,
+              recordedAt: input.receipt.occurredAt,
+              envelope: reservation.envelope,
+              use: input.validation,
+            };
+          } else {
+            throw unavailableGrant(grantId);
+          }
+          assertOwned();
+          createPrivateFileAtomic(terminalPath, serialize(terminal));
+          cleanupNonterminal(
+            paths,
+            grantId,
+            reservation.envelope,
+            transitionDigest,
+          );
+          assertOwned();
+          return terminal;
+        },
+      },
+    },
+  );
+  return inspectTerminal(transition.value);
 }
 
 export function readExactConsumedCollaborationGrantUse(
@@ -937,21 +1027,47 @@ export function failCollaborationReservationUnderLifecycleLock(
   if (reservation.transitionDigest !== transitionDigest) {
     throw unavailableGrant(grantId);
   }
-  const terminal: CollaborationTerminalRecord = {
-    schemaVersion: 1,
-    state: 'failed',
-    grantId,
-    transitionDigest,
-    reason: terminalReason,
-    recordedAt: exactDate(now).toISOString(),
-    envelope: reservation.envelope,
-    use: null,
-  };
-  assertOwned();
-  createPrivateFileAtomic(terminalPath, serialize(terminal));
-  cleanupNonterminal(paths, grantId, reservation.envelope, transitionDigest);
-  assertOwned();
-  return inspectTerminal(terminal);
+  const transition = executeGrantLifecycleTransitionV1(
+    {
+      contractVersion: GRANT_LIFECYCLE_CONTRACT_VERSION_V1,
+      grantId,
+      transitionDigest,
+      maxUses: reservation.envelope.payload.maxUses,
+      event: { kind: 'fail', reason: terminalReason },
+    },
+    {
+      clock: { now: () => exactDate(now) },
+      storage: {
+        readState: () => 'reserved',
+        applyTransition(input) {
+          if (input.receipt.toState !== 'failed') {
+            throw unavailableGrant(grantId);
+          }
+          const terminal: CollaborationTerminalRecord = {
+            schemaVersion: 1,
+            state: 'failed',
+            grantId,
+            transitionDigest,
+            reason: input.receipt.reason,
+            recordedAt: input.receipt.occurredAt,
+            envelope: reservation.envelope,
+            use: null,
+          };
+          assertOwned();
+          createPrivateFileAtomic(terminalPath, serialize(terminal));
+          cleanupNonterminal(
+            paths,
+            grantId,
+            reservation.envelope,
+            transitionDigest,
+          );
+          assertOwned();
+          return terminal;
+        },
+      },
+    },
+  );
+  return inspectTerminal(transition.value);
 }
 
 export function revokeCollaborationGrant(
@@ -1135,25 +1251,57 @@ function terminallyRevokeCollaborationGrant(
       ExitCode.guard,
     );
   }
-  const terminal: CollaborationTerminalRecord = {
-    schemaVersion: 1,
-    state: 'revoked',
-    grantId,
-    transitionDigest: target.transitionDigest,
-    reason: authorization.payload.reason,
-    recordedAt: authorization.payload.revokedAt,
-    envelope: target.envelope,
-    use: null,
-    revocationAuthorization: authorization,
-  };
-  assertOwned();
-  createPrivateFileAtomic(
-    statePath(paths.terminal, grantId),
-    serialize(terminal),
+  const transition = executeGrantLifecycleTransitionV1(
+    {
+      contractVersion: GRANT_LIFECYCLE_CONTRACT_VERSION_V1,
+      grantId,
+      transitionDigest: target.transitionDigest,
+      maxUses: target.envelope.payload.maxUses,
+      event: { kind: 'revoke', reason: authorization.payload.reason },
+    },
+    {
+      clock: {
+        now: () => exactDate(new Date(authorization.payload.revokedAt)),
+      },
+      storage: {
+        readState: () => target.state,
+        applyTransition(input) {
+          if (input.receipt.toState !== 'revoked') {
+            throw workflowError(
+              'HUMAN_REVOCATION_STATE_INVALID',
+              'Only active collaboration authority can be revoked.',
+              ExitCode.guard,
+            );
+          }
+          const terminal: CollaborationTerminalRecord = {
+            schemaVersion: 1,
+            state: 'revoked',
+            grantId,
+            transitionDigest: target.transitionDigest,
+            reason: input.receipt.reason,
+            recordedAt: input.receipt.occurredAt,
+            envelope: target.envelope,
+            use: null,
+            revocationAuthorization: authorization,
+          };
+          assertOwned();
+          createPrivateFileAtomic(
+            statePath(paths.terminal, grantId),
+            serialize(terminal),
+          );
+          cleanupNonterminal(
+            paths,
+            grantId,
+            target.envelope,
+            target.transitionDigest,
+          );
+          assertOwned();
+          return terminal;
+        },
+      },
+    },
   );
-  cleanupNonterminal(paths, grantId, target.envelope, target.transitionDigest);
-  assertOwned();
-  return inspectTerminal(terminal);
+  return inspectTerminal(transition.value);
 }
 
 export function inspectCollaborationGrants(
@@ -1279,6 +1427,9 @@ function inspectEnvelope(
 ): CollaborationGrantInspection {
   return deepFreeze({
     grantId: envelope.payload.grantId,
+    version: envelope.payload.version,
+    signatureNamespace: collaborationGrantSignatureNamespace(envelope.payload),
+    authorizedEffect: envelope.payload.authorizedEffect,
     state,
     changeId: envelope.payload.changeId,
     taskId: envelope.payload.taskId,
@@ -2331,11 +2482,11 @@ function loadSelectionValidationContext(
   repositoryRoot: string,
   expectedCore: CollaborationGrantSelectionCoreBinding,
   requestedNow: Date | undefined,
-  requestedVerifier: MaintainerSignerProvider | undefined,
+  requestedVerifier: GrantVerifierPort | undefined,
 ): {
   now: Date;
   policy: MaintainerPolicy;
-  verifier: MaintainerSignerProvider;
+  verifier: GrantVerifierPort;
 } {
   const baselineCommit = exactRepositoryCommit(
     repositoryRoot,

@@ -12,8 +12,19 @@ import {
   type ExecutionFailureKind,
   type ReadOnlyProbeRequest,
 } from '../../modules/provider-orchestration/execution-core.ts';
+import type {
+  AgentRuntimeCompletionReceipt,
+  AgentRuntimePort,
+  AgentRuntimeProcessActivity,
+  AgentRuntimeProcessProgressProjection,
+  AgentRuntimeSingleShotInput,
+  AgentRuntimeSingleShotOptions,
+  AgentRuntimeSingleShotReport,
+  ProviderInvocationAcceptanceBinding,
+} from '../../composition-root/agent-runtime-production.ts';
 import { readInvestigationSession } from '../../runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
+import { productionAgentRuntime } from '../../composition-root/agent-runtime-production.ts';
 import {
   PLAN_REVIEW_OUTPUT_SCHEMA,
   PLAN_REVIEW_OUTPUT_VALIDATOR,
@@ -48,6 +59,7 @@ import {
   releaseProviderInvocationWorkerFence,
   readPlanReviewSnapshotRuntime,
   readProviderInvocation,
+  readProviderInvocationRuntimeReceipt,
   readProviderInvocationRequest,
   type ProviderInvocationFailure,
   type ProviderInvocationRecord,
@@ -56,12 +68,6 @@ import {
   isProposeExemptionInvestigationId,
   readProposeExemptionSession,
 } from '../../runtime/storage-journal/propose-exemption-store.ts';
-import {
-  runBuiltInProvider,
-  type ProviderRunInput,
-  type ProviderRunOptions,
-  type ProviderRunnerReport,
-} from '../../runtime/provider-execution/provider-runner.ts';
 import { extractProviderRepairFailure } from '../../runtime/provider-execution/provider-execution-governance.ts';
 import {
   processProviderFailureRetry,
@@ -91,14 +97,19 @@ export type ProviderWorkerResult = {
   failure: { kind: string; code: string; message: string } | null;
 };
 
+export type AsyncProviderWorkerResult = ProviderWorkerResult &
+  Readonly<{
+    completionReceipt: AgentRuntimeCompletionReceipt | null;
+  }>;
+
 export type ProviderWorkerOptions = {
   workerId?: string;
   platform?: NodeJS.Platform;
   environment?: NodeJS.ProcessEnv;
-  runner?: (
-    input: ProviderRunInput,
-    options: ProviderRunOptions,
-  ) => ProviderRunnerReport;
+  signal?: AbortSignal;
+  agentRuntime?: AgentRuntimePort;
+  /** @deprecated Use the core-owned `agentRuntime` port injection seam. */
+  runner?: AgentRuntimePort['runSingleShot'];
   automaticRetry?: {
     enabled?: boolean;
     now?: string;
@@ -160,6 +171,74 @@ export function runProviderWorker(
   requestedInvocationId: string,
   options: ProviderWorkerOptions = {},
 ): ProviderWorkerResult {
+  const result = runProviderWorkerWithExecution(
+    cwd,
+    requestedInvocationId,
+    options,
+    (agentRuntime, input, runtimeOptions) =>
+      agentRuntime.runSingleShot(input, runtimeOptions),
+  );
+  if (isPromiseLike(result)) {
+    throw new TypeError('Synchronous provider worker returned a promise.');
+  }
+  return result;
+}
+
+/** Production worker path: async process execution with a typed completion receipt. */
+export async function runProviderWorkerAsync(
+  cwd: string,
+  requestedInvocationId: string,
+  options: ProviderWorkerOptions = {},
+): Promise<AsyncProviderWorkerResult> {
+  const progress = createAgentRuntimeProgressTracker();
+  const result = await runProviderWorkerWithExecution(
+    cwd,
+    requestedInvocationId,
+    options,
+    (agentRuntime, input, runtimeOptions) => {
+      if (agentRuntime.runSingleShotAsync === undefined) {
+        throw workflowError(
+          'AGENT_RUNTIME_ASYNC_UNAVAILABLE',
+          'The selected Agent Runtime does not implement asynchronous execution.',
+          ExitCode.verification,
+        );
+      }
+      return agentRuntime
+        .runSingleShotAsync(input, {
+          ...runtimeOptions,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+          onActivity: progress.record,
+        })
+        .then((report) => {
+          progress.assertSuccessfulCompletion();
+          return report;
+        });
+    },
+    () => progress.snapshot(),
+  );
+  const context = loadInvestigationRuntimeContext(cwd);
+  return Object.freeze({
+    ...result,
+    completionReceipt: readProviderInvocationRuntimeReceipt(
+      context.runtime,
+      result.invocationId,
+    ),
+  });
+}
+
+type ProviderWorkerExecution = (
+  agentRuntime: AgentRuntimePort,
+  input: AgentRuntimeSingleShotInput,
+  options: AgentRuntimeSingleShotOptions,
+) => AgentRuntimeSingleShotReport | Promise<AgentRuntimeSingleShotReport>;
+
+function runProviderWorkerWithExecution(
+  cwd: string,
+  requestedInvocationId: string,
+  options: ProviderWorkerOptions,
+  execute: ProviderWorkerExecution,
+  runtimeProgress?: () => AgentRuntimeProcessProgressProjection,
+): ProviderWorkerResult | Promise<ProviderWorkerResult> {
   const context = loadInvestigationRuntimeContext(cwd);
   const initial = readProviderInvocation(
     context.runtime,
@@ -262,35 +341,35 @@ export function runProviderWorker(
         initial.invocationId,
         claimInput,
       );
-  const runner = options.runner ?? runBuiltInProvider;
-  let terminal: ProviderInvocationRecord;
-  try {
-    const acceptanceBinding = prepareProviderInvocationAcceptanceBinding(
-      context.runtime,
+  const agentRuntime = resolveAgentRuntime(options);
+  const runtimeInputBase: Omit<
+    AgentRuntimeSingleShotInput,
+    'acceptanceBinding'
+  > = {
+    providerId: request.providerId,
+    repositoryRoot: context.git.repositoryRoot,
+    invocationDirectory: path.join(
+      context.runtime.invocations,
       request.invocationId,
-    );
-    const report = runner(
-      {
-        providerId: request.providerId,
-        repositoryRoot: context.git.repositoryRoot,
-        invocationDirectory: path.join(
-          context.runtime.invocations,
-          request.invocationId,
-        ),
-        request,
-        semanticOutputSchema: semantic.schema,
-        outputValidator: semantic.validator,
-        governedRuntimeInputs:
-          reviewSnapshot?.files.map(({ id, path: filePath }) => ({
-            id,
-            path: filePath,
-          })) ?? [],
-        acceptanceBinding,
-        reviewSnapshotRoot: reviewSnapshot?.root ?? null,
-        sourceEnvironment: options.environment ?? process.env,
-      },
-      { platform: options.platform ?? process.platform },
-    );
+    ),
+    request,
+    semanticOutputSchema: semantic.schema,
+    outputValidator: semantic.validator,
+    governedRuntimeInputs:
+      reviewSnapshot?.files.map(({ id, path: filePath }) => ({
+        id,
+        path: filePath,
+      })) ?? [],
+    reviewSnapshotRoot: reviewSnapshot?.root ?? null,
+    sourceEnvironment: options.environment ?? process.env,
+  };
+  const runtimeOptions = {
+    platform: options.platform ?? process.platform,
+  };
+  const completeWithReport = (
+    report: AgentRuntimeSingleShotReport,
+    acceptanceBinding: ProviderInvocationAcceptanceBinding,
+  ): ProviderInvocationRecord => {
     assertProviderInvocationAcceptanceBindingCurrent(
       context.runtime,
       acceptanceBinding,
@@ -301,49 +380,94 @@ export function runProviderWorker(
       leaseToken: claim.leaseToken,
       report,
       acceptanceBinding,
+      ...(runtimeProgress === undefined
+        ? {}
+        : { runtimeProgress: runtimeProgress() }),
     };
-    terminal =
-      taskStrategyImplementationOwner === null
-        ? completeProviderInvocationFromRunner(
-            context.runtime,
-            request.invocationId,
-            completion,
-          )
-        : withRepositoryLifecycleOperation(
-            context.lifecycleRuntime,
-            (assertOwned) => {
-              assertTaskStrategyImplementationProviderOwnerCurrent(
-                cwd,
-                request.invocationId,
-              );
-              assertOwned();
-              return completeProviderInvocationFromRunnerUnderLifecycleLock(
-                context.runtime,
-                request.invocationId,
-                completion,
-                assertOwned,
-              );
-            },
-          );
-  } catch (error) {
+    return taskStrategyImplementationOwner === null
+      ? completeProviderInvocationFromRunner(
+          context.runtime,
+          request.invocationId,
+          completion,
+        )
+      : withRepositoryLifecycleOperation(
+          context.lifecycleRuntime,
+          (assertOwned) => {
+            assertTaskStrategyImplementationProviderOwnerCurrent(
+              cwd,
+              request.invocationId,
+            );
+            assertOwned();
+            return completeProviderInvocationFromRunnerUnderLifecycleLock(
+              context.runtime,
+              request.invocationId,
+              completion,
+              assertOwned,
+            );
+          },
+        );
+  };
+  const failWithError = (
+    error: unknown,
+    acceptanceBinding: ProviderInvocationAcceptanceBinding | null,
+  ): ProviderInvocationRecord => {
     const failure = classifyProviderFailure(error);
     const repair = extractProviderRepairFailure(error, semantic.schema);
-    terminal = failProviderInvocation(context.runtime, request.invocationId, {
+    return failProviderInvocation(context.runtime, request.invocationId, {
       expectedRevision: claim.record.revision,
       leaseGeneration: claim.record.leaseGeneration,
       leaseToken: claim.leaseToken,
       failure,
+      ...(runtimeProgress === undefined || acceptanceBinding === null
+        ? {}
+        : {
+            runtimeEvidence: {
+              acceptanceBinding,
+              progress: runtimeProgress(),
+            },
+          }),
       ...(repair === null ? {} : { repair }),
     });
-  } finally {
+  };
+  const renderTerminal = (
+    terminal: ProviderInvocationRecord,
+  ): ProviderWorkerResult => {
+    runTerminalFollowups(cwd, terminal, options);
+    return renderWorkerResult(terminal, true);
+  };
+  const releaseWorkerFence = () =>
     releaseProviderInvocationWorkerFence(
       context.runtime,
       request.invocationId,
       claim.workerFenceToken,
     );
+  let releaseSynchronously = true;
+  let preparedAcceptanceBinding: ProviderInvocationAcceptanceBinding | null =
+    null;
+  try {
+    const acceptanceBinding = prepareProviderInvocationAcceptanceBinding(
+      context.runtime,
+      request.invocationId,
+    );
+    preparedAcceptanceBinding = acceptanceBinding;
+    const runtimeInput = { ...runtimeInputBase, acceptanceBinding };
+    const report = execute(agentRuntime, runtimeInput, runtimeOptions);
+    if (isPromiseLike(report)) {
+      releaseSynchronously = false;
+      return Promise.resolve(report)
+        .then((completedReport) =>
+          completeWithReport(completedReport, acceptanceBinding),
+        )
+        .catch((error) => failWithError(error, acceptanceBinding))
+        .finally(releaseWorkerFence)
+        .then(renderTerminal);
+    }
+    return renderTerminal(completeWithReport(report, acceptanceBinding));
+  } catch (error) {
+    return renderTerminal(failWithError(error, preparedAcceptanceBinding));
+  } finally {
+    if (releaseSynchronously) releaseWorkerFence();
   }
-  runTerminalFollowups(cwd, terminal, options);
-  return renderWorkerResult(terminal, true);
 }
 
 function createProviderWorkerDispatcher(host: ProviderDispatcherHost) {
@@ -559,6 +683,127 @@ function providerRetryAfterMs(error: unknown): number | null {
     : null;
 }
 
+function resolveAgentRuntime(options: ProviderWorkerOptions): AgentRuntimePort {
+  if (options.agentRuntime !== undefined) {
+    return options.agentRuntime;
+  }
+  if (options.runner !== undefined) {
+    return { runSingleShot: options.runner };
+  }
+  return productionAgentRuntime;
+}
+
+type AgentRuntimeProgressTracker = Readonly<{
+  record(event: AgentRuntimeProcessActivity): void;
+  assertSuccessfulCompletion(): void;
+  snapshot(): AgentRuntimeProcessProgressProjection;
+}>;
+
+function createAgentRuntimeProgressTracker(): AgentRuntimeProgressTracker {
+  let processState: AgentRuntimeProcessProgressProjection['processState'] =
+    'not-started';
+  let eventCount = 0;
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let lastProcessActivityElapsedMs: number | null = null;
+  let lastProviderActivityElapsedMs: number | null = null;
+
+  const record = (event: AgentRuntimeProcessActivity): void => {
+    if (!isAgentRuntimeActivityType(event.type)) {
+      throw new TypeError('Agent Runtime activity type is unknown.');
+    }
+    if (
+      !Number.isSafeInteger(event.elapsedMs) ||
+      event.elapsedMs < 0 ||
+      (lastProcessActivityElapsedMs !== null &&
+        event.elapsedMs < lastProcessActivityElapsedMs)
+    ) {
+      throw new TypeError('Agent Runtime activity elapsed time is invalid.');
+    }
+    if (processState !== 'not-started' && processState !== 'running') {
+      throw new TypeError('Agent Runtime emitted activity after termination.');
+    }
+    if (event.type === 'spawned') {
+      if (processState !== 'not-started' || event.bytes !== undefined) {
+        throw new TypeError('Agent Runtime emitted an invalid spawn event.');
+      }
+      processState = 'running';
+    } else if (event.type === 'stdout' || event.type === 'stderr') {
+      if (
+        processState !== 'running' ||
+        !Number.isSafeInteger(event.bytes) ||
+        event.bytes! < 0
+      ) {
+        throw new TypeError('Agent Runtime emitted invalid stream activity.');
+      }
+      if (event.type === 'stdout') stdoutBytes += event.bytes!;
+      else stderrBytes += event.bytes!;
+      if (!Number.isSafeInteger(stdoutBytes + stderrBytes)) {
+        throw new TypeError('Agent Runtime activity byte count overflowed.');
+      }
+      lastProviderActivityElapsedMs = event.elapsedMs;
+    } else {
+      if (event.bytes !== undefined) {
+        throw new TypeError('Agent Runtime termination carried byte data.');
+      }
+      processState = event.type;
+    }
+    eventCount += 1;
+    if (!Number.isSafeInteger(eventCount)) {
+      throw new TypeError('Agent Runtime activity event count overflowed.');
+    }
+    lastProcessActivityElapsedMs = event.elapsedMs;
+  };
+
+  return Object.freeze({
+    record,
+    assertSuccessfulCompletion(): void {
+      if (processState !== 'exited') {
+        throw new TypeError(
+          'Agent Runtime completed without an observed successful process exit.',
+        );
+      }
+    },
+    snapshot(): AgentRuntimeProcessProgressProjection {
+      return Object.freeze({
+        schemaVersion: 1,
+        kind: 'agent-runtime-process-progress',
+        processState,
+        eventCount,
+        stdoutBytes,
+        stderrBytes,
+        lastProcessActivityElapsedMs,
+        lastProviderActivityElapsedMs,
+      });
+    },
+  });
+}
+
+function isAgentRuntimeActivityType(
+  value: unknown,
+): value is AgentRuntimeProcessActivity['type'] {
+  return (
+    value === 'spawned' ||
+    value === 'stdout' ||
+    value === 'stderr' ||
+    value === 'exited' ||
+    value === 'timed-out' ||
+    value === 'cancelled' ||
+    value === 'output-limit' ||
+    value === 'spawn-error' ||
+    value === 'protocol-error'
+  );
+}
+
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'then' in value &&
+    typeof value.then === 'function'
+  );
+}
+
 function runTerminalFollowups(
   cwd: string,
   terminal: ProviderInvocationRecord,
@@ -566,7 +811,8 @@ function runTerminalFollowups(
 ): void {
   const retryEnabled =
     terminal.state === 'failed' &&
-    (options.automaticRetry?.enabled ?? options.runner === undefined);
+    (options.automaticRetry?.enabled ??
+      (options.agentRuntime === undefined && options.runner === undefined));
   if (retryEnabled) {
     try {
       processProviderFailureRetry(cwd, terminal.invocationId, {
@@ -581,7 +827,8 @@ function runTerminalFollowups(
     }
   }
   const pumpEnabled =
-    options.schedulePump?.enabled ?? options.runner === undefined;
+    options.schedulePump?.enabled ??
+    (options.agentRuntime === undefined && options.runner === undefined);
   if (pumpEnabled) {
     try {
       pumpProviderRetrySchedules(cwd, {

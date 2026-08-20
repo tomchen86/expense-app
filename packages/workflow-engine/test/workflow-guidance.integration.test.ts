@@ -11,6 +11,11 @@ import {
   workflowFailureRecoveryCommand,
   workflowResultNextSteps,
 } from '../src/modules/guidance/next-steps/workflow-guidance.ts';
+import {
+  createManagedWorkflowCommandRegistry,
+  MANAGED_WORKFLOW_COMMAND_REGISTRY,
+  resolveManagedWorkflowCommandRoute,
+} from '../src/modules/guidance/catalog/managed-workflow-command-registry.ts';
 import { ExitCode, workflowError } from '../src/foundation/errors/errors.ts';
 import { reviseTask } from '../src/application/revise/task-revision.ts';
 import {
@@ -75,6 +80,61 @@ test('workflow guide exposes one versioned advisory catalog with finalize as the
   assert.equal(
     new Set(WORKFLOW_GUIDANCE_CATALOG.commands.map(({ id }) => id)).size,
     WORKFLOW_GUIDANCE_CATALOG.commands.length,
+  );
+});
+
+test('help projects every managed guide usage exactly once', () => {
+  const run = spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', cliPath, 'help'],
+    { cwd: sourceRepositoryRoot, encoding: 'utf8' },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  const usageLines = run.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('pnpm workflow '));
+  for (const command of WORKFLOW_GUIDANCE_CATALOG.commands) {
+    for (const usage of command.usage) {
+      assert.equal(
+        usageLines.filter((line) => line === usage).length,
+        1,
+        usage,
+      );
+    }
+  }
+});
+
+test('managed guide registry owns nested routes and rejects duplicate projections', () => {
+  assert.equal(
+    resolveManagedWorkflowCommandRoute(['maintainer', 'review-diff-attest']).id,
+    'maintainer-review-diff-attest',
+  );
+  const first = MANAGED_WORKFLOW_COMMAND_REGISTRY.entries[0]!;
+  const second = MANAGED_WORKFLOW_COMMAND_REGISTRY.entries[1]!;
+  assert.throws(
+    () =>
+      createManagedWorkflowCommandRegistry([
+        first,
+        { ...second, route: first.route },
+      ]),
+    /routes must be unique/u,
+  );
+  assert.throws(
+    () =>
+      createManagedWorkflowCommandRegistry([
+        first,
+        { ...second, usage: first.usage },
+      ]),
+    /usage lines must be unique/u,
+  );
+  assert.throws(
+    () =>
+      createManagedWorkflowCommandRegistry([
+        first,
+        { ...second, id: first.id },
+      ]),
+    /IDs must be unique/u,
   );
 });
 
@@ -183,6 +243,21 @@ test('task-strategy retry and exhaustion guidance exposes executable recovery wi
       `pnpm workflow status ${sessionId} --json`,
       `pnpm workflow abort ${sessionId} --reason 'Correction budget exhausted' --json`,
       'pnpm workflow guide --json',
+    ],
+  );
+});
+
+test('task-strategy correction-required is an explicit resumable state', () => {
+  const sessionId =
+    'session-20260812000000000-00000000-0000-4000-8000-000000000000';
+  assert.deepEqual(
+    workflowResultNextSteps({
+      command: 'resume',
+      result: { sessionId, state: 'correction-required' },
+    }).map(({ command }) => command),
+    [
+      `pnpm workflow resume ${sessionId} --json`,
+      `pnpm workflow status ${sessionId} --json`,
     ],
   );
 });

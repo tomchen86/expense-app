@@ -40,6 +40,10 @@ import {
 } from '../../modules/authority/maintainer-manifest.ts';
 import { parseManagedTrailers } from '../../modules/lifecycle/managed-trailers.ts';
 import {
+  isManagedAuthorityPlanState,
+  type ManagedAuthorityPlanState,
+} from '../../modules/lifecycle/managed-workflow-state-contract.ts';
+import {
   assertChangeId,
   assertPolicyPathInsideRepository,
   assertTaskId,
@@ -101,13 +105,7 @@ export type AuthorityPlanAttestation = Readonly<{
   envelopeDigest: string;
 }>;
 
-export type AuthorityPlanState =
-  | 'prepared'
-  | 'applying-local'
-  | 'local-applied'
-  | 'awaiting-attestation'
-  | 'attestation-issued'
-  | 'completed';
+export type AuthorityPlanState = ManagedAuthorityPlanState;
 
 export type AuthorityPlanRecord = Readonly<{
   schemaVersion: 1;
@@ -588,6 +586,11 @@ function parseIntent(value: unknown): AuthorityPlanIntent {
     externalEffects,
     evidenceWaivers,
   });
+}
+
+/** Validate and normalize an authority-plan intent without preparing a plan. */
+export function parseAuthorityPlanIntent(value: unknown): AuthorityPlanIntent {
+  return parseIntent(value);
 }
 
 function parseMutation(value: unknown): AuthorityPlanMutation {
@@ -1172,7 +1175,7 @@ function parseRecord(value: unknown): AuthorityPlanRecord {
     typeof value.updatedAt !== 'string' ||
     !isExactTime(value.createdAt) ||
     !isExactTime(value.updatedAt) ||
-    !isState(value.state) ||
+    !isManagedAuthorityPlanState(value.state) ||
     typeof value.branch !== 'string' ||
     typeof value.baseCommit !== 'string' ||
     !COMMIT_OID.test(value.baseCommit) ||
@@ -1221,17 +1224,6 @@ function assertPlanId(value: string): string {
     );
   }
   return value;
-}
-
-function isState(value: unknown): value is AuthorityPlanState {
-  return (
-    value === 'prepared' ||
-    value === 'applying-local' ||
-    value === 'local-applied' ||
-    value === 'awaiting-attestation' ||
-    value === 'attestation-issued' ||
-    value === 'completed'
-  );
 }
 
 function hasExactKeys(
