@@ -19,7 +19,7 @@ import {
   readInvestigationSession,
   type InvestigationSession,
 } from '../../runtime/storage-journal/investigation-session-store.ts';
-import { investigationRuntimePaths } from '../../runtime/session-workspace/paths.ts';
+import { investigationRuntimePaths } from '@jigwright/core/runtime-path-kernel';
 import { readPlanReviewCoverageRequirementNode } from './plan-review-coverage.ts';
 import { readPlanReviewNode } from './plan-review.ts';
 import { assessPredicateDiscrimination } from '../investigation/domain/predicate-discrimination.ts';

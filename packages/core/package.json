@@ -14,6 +14,7 @@
     "./planning-provider-binding": "./src/planning-provider-binding.ts",
     "./planning-provider-port": "./src/planning-provider-port.ts",
     "./repository-path": "./src/repository-path.ts",
+    "./runtime-path-kernel": "./src/runtime-path-kernel.ts",
     "./session-runtime-layout-port": "./src/session-runtime-layout-port.ts",
     "./tracked-object-reader-port": "./src/tracked-object-reader-port.ts"
   },

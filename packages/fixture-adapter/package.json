@@ -6,6 +6,7 @@
     ".": "./src/fixture-check-registry.ts",
     "./evidence-node": "./src/fixture-evidence-node.ts",
     "./managed-transition-reader": "./src/fixture-managed-transition-reader.ts",
+    "./runtime-paths": "./src/fixture-runtime-paths.ts",
     "./session-runtime-layout": "./src/fixture-session-runtime-layout.ts",
     "./tracked-object-reader": "./src/fixture-tracked-object-reader.ts"
   },

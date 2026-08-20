@@ -20,6 +20,9 @@
         "../core/src/managed-transition-trailers.ts"
       ],
       "@jigwright/core/repository-path": ["../core/src/repository-path.ts"],
+      "@jigwright/core/runtime-path-kernel": [
+        "../core/src/runtime-path-kernel.ts"
+      ],
       "@jigwright/core/session-runtime-layout-port": [
         "../core/src/session-runtime-layout-port.ts"
       ],

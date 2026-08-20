@@ -8,10 +8,8 @@ import type {
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
 import { previewExactStaging } from '../../runtime/repository-transaction/git-transitions.ts';
 import { runGit } from '../../runtime/repository-transaction/git.ts';
-import {
-  investigationRuntimePaths,
-  matchesAllowedPath,
-} from '../../runtime/session-workspace/paths.ts';
+import { investigationRuntimePaths } from '@jigwright/core/runtime-path-kernel';
+import { matchesAllowedPath } from '../../runtime/session-workspace/paths.ts';
 import { resolveCurrentTaskStrategyCorrection } from '../../application/execute-task/task-strategy-correction.ts';
 import { readTaskStrategyGreenFailureRecord } from '../../runtime/storage-journal/task-strategy-correction-store.ts';
 import {

@@ -20,7 +20,7 @@ import {
   readExecutionJobState,
 } from '../../runtime/storage-journal/execution-store.ts';
 import { ExitCode, workflowError } from '../../foundation/errors/errors.ts';
-import type { InvestigationRuntimePaths } from '../../runtime/session-workspace/paths.ts';
+import type { InvestigationRuntimePaths } from '@jigwright/core/runtime-path-kernel';
 import type { ProviderInvocationRequest } from './provider-contracts.ts';
 import {
   readProviderExecutionPolicySnapshot,

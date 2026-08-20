@@ -21,6 +21,7 @@ test('@jigwright/fixture-adapter has one-way public package dependencies', () =>
     '.',
     './evidence-node',
     './managed-transition-reader',
+    './runtime-paths',
     './session-runtime-layout',
     './tracked-object-reader',
   ]);
