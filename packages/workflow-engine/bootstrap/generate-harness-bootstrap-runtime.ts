@@ -254,7 +254,7 @@ function workspaceCompilerPaths(
     .slice(1)
     .flatMap((descriptor) =>
       resolveWorkspaceSourceExports(repositoryRoot, descriptor).map(
-        ({ subpath, sourcePath }) => [
+        ({ subpath, sourcePath }): [string, string[]] => [
           subpath === '.'
             ? descriptor.name
             : `${descriptor.name}${subpath.slice(1)}`,
