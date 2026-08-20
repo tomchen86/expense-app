@@ -51,6 +51,9 @@
         "../grants/src/grant-envelope-verifier.ts"
       ],
       "@jigwright/grants/grant-lifecycle": ["../grants/src/grant-lifecycle.ts"],
+      "@jigwright/grants/signed-attestation-envelope-reader": [
+        "../grants/src/signed-attestation-envelope-reader.ts"
+      ],
       "@jigwright/openspec-adapter": ["../openspec-adapter/src/index.ts"],
       "@jigwright/openspec-adapter/planning-provider": [
         "../openspec-adapter/src/planning-provider.ts"

@@ -5,7 +5,8 @@
   "exports": {
     "./collaboration-grant-envelope-reader": "./src/collaboration-grant-envelope-reader.ts",
     "./grant-envelope-verifier": "./src/grant-envelope-verifier.ts",
-    "./grant-lifecycle": "./src/grant-lifecycle.ts"
+    "./grant-lifecycle": "./src/grant-lifecycle.ts",
+    "./signed-attestation-envelope-reader": "./src/signed-attestation-envelope-reader.ts"
   },
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.ts",

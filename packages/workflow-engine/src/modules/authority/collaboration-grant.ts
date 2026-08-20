@@ -15,6 +15,15 @@ import {
   type CollaborationGrantPayloadCodecV1,
 } from '@jigwright/grants/collaboration-grant-envelope-reader';
 import { type VerifiedGrantCapabilityV1 } from '@jigwright/grants/grant-envelope-verifier';
+import {
+  SIGNED_ATTESTATION_ENVELOPE_READER_CONTRACT_VERSION_V1,
+  SignedAttestationEnvelopeReaderError,
+  canonicalSignedAttestationEnvelopeBytesV1,
+  canonicalSignedAttestationPayloadBytesV1,
+  parseSignedAttestationEnvelopeV1,
+  readAndVerifySignedAttestationEnvelopeV1,
+  type SignedAttestationPayloadCodecV1,
+} from '@jigwright/grants/signed-attestation-envelope-reader';
 
 import type { ActorAssurance } from '../provider-orchestration/actor-identity.ts';
 import {
@@ -370,6 +379,30 @@ const COLLABORATION_GRANT_PAYLOAD_CODEC: CollaborationGrantPayloadCodecV1<Collab
     validateSignature: assertArmoredSignature,
   };
 
+const DIRECT_HUMAN_REVIEW_ATTESTATION_CODEC: SignedAttestationPayloadCodecV1<DirectHumanReviewAttestationPayload> =
+  {
+    payloadKeys: DIRECT_HUMAN_PAYLOAD_KEYS,
+    parsePayload(value) {
+      assertDirectHumanReviewPayload(
+        value as DirectHumanReviewAttestationPayload,
+      );
+      return value as DirectHumanReviewAttestationPayload;
+    },
+    projectPayloadFields(payload) {
+      return {
+        grantId: payload.grantId,
+        signedEnvelopeDigest: payload.signedEnvelopeDigest,
+        transitionDigest: payload.transitionDigest,
+        targetDigest: payload.targetDigest,
+        reviewNodeId: payload.reviewNodeId,
+        reviewResultDigest: payload.reviewResultDigest,
+        signedAt: payload.signedAt,
+        signer: payload.signer,
+      };
+    },
+    validateSignature: assertArmoredSignature,
+  };
+
 export function canonicalCollaborationGrantPayload(
   payload: CollaborationGrantPayload,
 ): string {
@@ -429,26 +462,31 @@ export function collaborationGrantEnvelopeDigest(
 export function canonicalDirectHumanReviewPayload(
   payload: DirectHumanReviewAttestationPayload,
 ): string {
-  return `${JSON.stringify({
-    version: payload.version,
-    grantId: payload.grantId,
-    signedEnvelopeDigest: payload.signedEnvelopeDigest,
-    transitionDigest: payload.transitionDigest,
-    targetDigest: payload.targetDigest,
-    reviewNodeId: payload.reviewNodeId,
-    reviewResultDigest: payload.reviewResultDigest,
-    signedAt: payload.signedAt,
-    signer: payload.signer,
-  })}\n`;
+  try {
+    return canonicalSignedAttestationPayloadBytesV1(
+      payload,
+      DIRECT_HUMAN_REVIEW_ATTESTATION_CODEC,
+    );
+  } catch (error) {
+    const signatureError = collaborationReaderSignatureCause(error);
+    if (signatureError) throw signatureError;
+    throw directHumanReviewInvalid();
+  }
 }
 
 export function canonicalDirectHumanReviewAttestation(
   attestation: DirectHumanReviewAttestation,
 ): string {
-  const payload = JSON.parse(
-    canonicalDirectHumanReviewPayload(attestation.payload),
-  ) as DirectHumanReviewAttestationPayload;
-  return `${JSON.stringify({ payload, signature: attestation.signature })}\n`;
+  try {
+    return canonicalSignedAttestationEnvelopeBytesV1(
+      attestation,
+      DIRECT_HUMAN_REVIEW_ATTESTATION_CODEC,
+    );
+  } catch (error) {
+    const signatureError = collaborationReaderSignatureCause(error);
+    if (signatureError) throw signatureError;
+    throw directHumanReviewInvalid();
+  }
 }
 
 export function directHumanReviewAttestationDigest(
@@ -464,41 +502,14 @@ export function parseDirectHumanReviewAttestation(
   raw: string,
 ): DirectHumanReviewAttestation {
   try {
-    if (typeof raw !== 'string' || raw.length > 32_768) {
-      throw new Error('invalid attestation size');
-    }
-    const value = JSON.parse(raw) as unknown;
-    if (
-      !isPlainRecord(value) ||
-      !hasExactDataKeys(value, ['payload', 'signature']) ||
-      !isPlainRecord(value.payload) ||
-      !hasExactDataKeys(value.payload, DIRECT_HUMAN_PAYLOAD_KEYS) ||
-      typeof value.signature !== 'string'
-    ) {
-      throw new Error('invalid attestation shape');
-    }
-    const attestation = {
-      payload: value.payload as unknown as DirectHumanReviewAttestationPayload,
-      signature: value.signature,
-    };
-    assertDirectHumanReviewPayload(attestation.payload);
-    assertArmoredSignature(attestation.signature);
-    if (canonicalDirectHumanReviewAttestation(attestation) !== raw) {
-      throw new Error('non-canonical attestation');
-    }
-    return deepFreeze(attestation);
-  } catch (error) {
-    if (
-      error instanceof WorkflowError &&
-      error.code === 'COLLABORATION_SIGNATURE_INVALID'
-    ) {
-      throw error;
-    }
-    throw workflowError(
-      'DIRECT_HUMAN_REVIEW_INVALID',
-      'Direct-human review attestation is invalid.',
-      ExitCode.guard,
+    return parseSignedAttestationEnvelopeV1(
+      raw,
+      DIRECT_HUMAN_REVIEW_ATTESTATION_CODEC,
     );
+  } catch (error) {
+    const signatureError = collaborationReaderSignatureCause(error);
+    if (signatureError) throw signatureError;
+    throw directHumanReviewInvalid();
   }
 }
 
@@ -775,51 +786,62 @@ export function validateDirectHumanReviewAttestation(
   ) {
     throw directHumanReviewInvalid();
   }
-  const parsed = parseDirectHumanReviewAttestation(
-    canonicalDirectHumanReviewAttestation(attestation),
-  );
-  const grant = validateCollaborationGrantEnvelope(
-    options.grantEnvelope,
-    options.policy,
-    {
-      now: options.now,
-      expected: bindingFromPayload(options.grantEnvelope.payload),
-      verifier: options.verifier,
-      allowExpired: true,
-    },
-  );
-  const grantPayload = grant.payload;
-  const signedAt = exactTimestamp(parsed.payload.signedAt);
-  if (
-    grantPayload.degradedForm !== 'direct-human-review' ||
-    grantPayload.availableActor.kind !== 'direct-human' ||
-    parsed.payload.grantId !== grantPayload.grantId ||
-    parsed.payload.signedEnvelopeDigest !==
-      collaborationGrantEnvelopeDigest(grant) ||
-    parsed.payload.transitionDigest !== options.transitionDigest ||
-    parsed.payload.targetDigest !== grantPayload.targetDigest ||
-    parsed.payload.reviewNodeId !== options.reviewNodeId ||
-    parsed.payload.reviewResultDigest !== options.reviewResultDigest ||
-    parsed.payload.signer !== grantPayload.signer ||
-    parsed.payload.signer !== grantPayload.availableActor.identity ||
-    signedAt === undefined ||
-    signedAt < Date.parse(grantPayload.issuedAt) ||
-    signedAt > Date.parse(grantPayload.expiresAt) ||
-    signedAt > exactDate(options.now).getTime() + 30_000
-  ) {
-    throw directHumanReviewInvalid();
-  }
   try {
-    options.verifier.verify(
-      canonicalDirectHumanReviewPayload(parsed.payload),
-      parsed.signature,
-      parsed.payload.signer,
-      DIRECT_HUMAN_REVIEW_SIGNATURE_NAMESPACE,
-    );
+    const verified = readAndVerifySignedAttestationEnvelopeV1({
+      readerContractVersion:
+        SIGNED_ATTESTATION_ENVELOPE_READER_CONTRACT_VERSION_V1,
+      raw: canonicalDirectHumanReviewAttestation(attestation),
+      codec: DIRECT_HUMAN_REVIEW_ATTESTATION_CODEC,
+      signatureNamespace: DIRECT_HUMAN_REVIEW_SIGNATURE_NAMESPACE,
+      allowedSignatureNamespaces: [DIRECT_HUMAN_REVIEW_SIGNATURE_NAMESPACE],
+      validatePayload(parsedPayload) {
+        const grant = validateCollaborationGrantEnvelope(
+          options.grantEnvelope,
+          options.policy,
+          {
+            now: options.now,
+            expected: bindingFromPayload(options.grantEnvelope.payload),
+            verifier: options.verifier,
+            allowExpired: true,
+          },
+        );
+        const grantPayload = grant.payload;
+        const signedAt = exactTimestamp(parsedPayload.signedAt);
+        if (
+          grantPayload.degradedForm !== 'direct-human-review' ||
+          grantPayload.availableActor.kind !== 'direct-human' ||
+          parsedPayload.grantId !== grantPayload.grantId ||
+          parsedPayload.signedEnvelopeDigest !==
+            collaborationGrantEnvelopeDigest(grant) ||
+          parsedPayload.transitionDigest !== options.transitionDigest ||
+          parsedPayload.targetDigest !== grantPayload.targetDigest ||
+          parsedPayload.reviewNodeId !== options.reviewNodeId ||
+          parsedPayload.reviewResultDigest !== options.reviewResultDigest ||
+          parsedPayload.signer !== grantPayload.signer ||
+          parsedPayload.signer !== grantPayload.availableActor.identity ||
+          signedAt === undefined ||
+          signedAt < Date.parse(grantPayload.issuedAt) ||
+          signedAt > Date.parse(grantPayload.expiresAt) ||
+          signedAt > exactDate(options.now).getTime() + 30_000
+        ) {
+          throw directHumanReviewInvalid();
+        }
+      },
+      signer: (parsedPayload) => parsedPayload.signer,
+      verifier: options.verifier,
+    });
+    return verified.envelope;
   } catch (error) {
-    throw collaborationSignatureInvalid(error);
+    if (error instanceof SignedAttestationEnvelopeReaderError) {
+      const signatureError = collaborationReaderSignatureCause(error);
+      if (signatureError) throw signatureError;
+      if (error.code === 'SIGNED_ATTESTATION_SIGNATURE_INVALID') {
+        throw collaborationSignatureInvalid(error);
+      }
+      throw directHumanReviewInvalid();
+    }
+    throw error;
   }
-  return parsed;
 }
 
 export function validateCollaborationGrantEnvelope(

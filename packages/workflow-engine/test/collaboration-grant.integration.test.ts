@@ -18,11 +18,14 @@ import {
   DIRECT_HUMAN_REVIEW_SIGNATURE_NAMESPACE,
   canonicalCollaborationGrantEnvelope,
   canonicalCollaborationGrantPayload,
+  canonicalDirectHumanReviewAttestation,
+  canonicalDirectHumanReviewPayload,
   collaborationGrantEnvelopeDigest,
   createDirectHumanReviewAttestation,
   directHumanReviewAttestationDigest,
   issueCollaborationGrant,
   parseCollaborationGrantEnvelope,
+  parseDirectHumanReviewAttestation,
   assertUniqueCollaborationGrantUses,
   validateCollaborationGrantEnvelope,
   type CollaborationGrantEnvelope,
@@ -757,8 +760,7 @@ test('collaboration grant versions own one namespace without fallback or pre-val
     const unknownEffect = structuredClone(issued.envelope) as unknown as {
       payload: Record<string, unknown>;
     };
-    unknownEffect.payload.authorizedEffect =
-      'role-context-sharing-degradation';
+    unknownEffect.payload.authorizedEffect = 'role-context-sharing-degradation';
     invalidCandidates.push(unknownEffect);
 
     for (const candidate of invalidCandidates) {
@@ -1511,6 +1513,57 @@ test('same-provider grants require the only callable provider and a fresh engine
   } finally {
     fixture.cleanup();
   }
+});
+
+test('direct-human review V1 retains exact canonical bytes and refuses version fallback', () => {
+  const signature =
+    '-----BEGIN SSH SIGNATURE-----\nYWJj\n-----END SSH SIGNATURE-----\n';
+  const payload = {
+    version: 1 as const,
+    grantId: GRANT_ID,
+    signedEnvelopeDigest: 'a'.repeat(64),
+    transitionDigest: 'b'.repeat(64),
+    targetDigest: 'c'.repeat(64),
+    reviewNodeId: 'd'.repeat(64),
+    reviewResultDigest: 'e'.repeat(64),
+    signedAt: '2026-08-20T00:00:00.000Z',
+    signer: 'fixture-maintainer',
+  };
+  const payloadBytes =
+    `{"version":1,"grantId":"${GRANT_ID}",` +
+    `"signedEnvelopeDigest":"${'a'.repeat(64)}",` +
+    `"transitionDigest":"${'b'.repeat(64)}",` +
+    `"targetDigest":"${'c'.repeat(64)}",` +
+    `"reviewNodeId":"${'d'.repeat(64)}",` +
+    `"reviewResultDigest":"${'e'.repeat(64)}",` +
+    '"signedAt":"2026-08-20T00:00:00.000Z",' +
+    '"signer":"fixture-maintainer"}\n';
+  const attestation = { payload, signature };
+  const envelopeBytes = `{"payload":${payloadBytes.trimEnd()},"signature":${JSON.stringify(signature)}}\n`;
+
+  assert.equal(canonicalDirectHumanReviewPayload(payload), payloadBytes);
+  assert.equal(
+    canonicalDirectHumanReviewAttestation(attestation),
+    envelopeBytes,
+  );
+  assert.deepEqual(
+    parseDirectHumanReviewAttestation(envelopeBytes),
+    attestation,
+  );
+  assert.throws(
+    () =>
+      parseDirectHumanReviewAttestation(
+        envelopeBytes.replace('{"version":1', '{"version":2'),
+      ),
+    (error) => isWorkflowError(error, 'DIRECT_HUMAN_REVIEW_INVALID'),
+  );
+  assert.throws(
+    () =>
+      parseDirectHumanReviewAttestation(
+        `${JSON.stringify({ signature, payload })}\n`,
+      ),
+    (error) => isWorkflowError(error, 'DIRECT_HUMAN_REVIEW_INVALID'),
+  );
 });
 
 test('ordinary scheduling never upgrades an unknown author provider to provider-independent', () => {
