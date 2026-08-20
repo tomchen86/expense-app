@@ -5,7 +5,10 @@ import type {
   ProviderRunnerReport,
 } from './provider-contracts.ts';
 import type { ProviderId } from './provider-registry.ts';
-import type { ProviderWrapperProtocolDeclaration } from './agent-runtime-protocol.ts';
+import type {
+  ProviderWrapperProtocolDeclaration,
+  ProviderWrapperProtocolReceipt,
+} from './agent-runtime-protocol.ts';
 
 /** JSON data accepted as one exact provider's semantic-output schema. */
 export type AgentRuntimeJsonValue =
@@ -126,8 +129,7 @@ export type AgentRuntimeProcessProgressProjection = Readonly<{
  * engine-stamped from the leased invocation and its exact Job/Attempt
  * acceptance binding; provider output cannot choose any identity field.
  */
-export type AgentRuntimeCompletionReceipt = Readonly<{
-  schemaVersion: 1;
+type AgentRuntimeCompletionReceiptFields = Readonly<{
   kind: 'agent-runtime-completion-receipt';
   invocationId: string;
   requestDigest: string;
@@ -144,6 +146,28 @@ export type AgentRuntimeCompletionReceipt = Readonly<{
   progress: AgentRuntimeProcessProgressProjection;
   receiptDigest: string;
 }>;
+
+/** Historical/raw async receipt bytes remain the exact v1 shape. */
+export type AgentRuntimeCompletionReceiptV1 =
+  AgentRuntimeCompletionReceiptFields &
+    Readonly<{
+      schemaVersion: 1;
+      protocolReceipt?: never;
+    }>;
+
+/**
+ * An opt-in wrapper run carries the exact validated terminal/progress receipt
+ * inside the same ProviderInvocation/Attempt completion projection.
+ */
+export type AgentRuntimeCompletionReceiptV2 =
+  AgentRuntimeCompletionReceiptFields &
+    Readonly<{
+      schemaVersion: 2;
+      protocolReceipt: ProviderWrapperProtocolReceipt;
+    }>;
+
+export type AgentRuntimeCompletionReceipt =
+  AgentRuntimeCompletionReceiptV1 | AgentRuntimeCompletionReceiptV2;
 
 /** Additive async controls for the single-shot compatibility launch. */
 export type AgentRuntimeAsyncSingleShotOptions = AgentRuntimeSingleShotOptions &

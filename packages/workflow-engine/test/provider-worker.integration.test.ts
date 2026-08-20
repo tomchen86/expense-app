@@ -14,6 +14,11 @@ import { projectProviderInvocationExecution } from '../src/modules/provider-orch
 import type { AgentRuntimePort } from '../src/modules/provider-orchestration/agent-runtime-port.ts';
 import type { ProviderInvocationAcceptanceBinding } from '../src/modules/provider-orchestration/agent-runtime-port.ts';
 import {
+  createProviderWrapperProtocolParser,
+  renderProviderWrapperFrame,
+  type ProviderWrapperProtocolReceipt,
+} from '../src/modules/provider-orchestration/agent-runtime-protocol.ts';
+import {
   buildContextManifest,
   inspectDurableEpochContextStore,
   rolloverDurableEpochContextStore,
@@ -280,6 +285,162 @@ for (const objectFormat of ['sha1', 'sha256'] as const) {
     }
   });
 }
+
+test('async provider worker durably binds a wrapper protocol receipt to its accepted Attempt', async () => {
+  const repository = createFixtureRepository();
+  const changeId = 'worker-wrapper-protocol-receipt';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const started = startPropose(repository, changeId, intent(), {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const invocationId = started.investigation!.providerInvocationId;
+    const locator = discoverRepository(repository);
+    const runtime = investigationRuntimePaths(
+      locator.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const request = readProviderInvocationRequest(runtime, invocationId);
+    let launches = 0;
+    let protocolReceipt: ProviderWrapperProtocolReceipt | null = null;
+    const agentRuntime: AgentRuntimePort = {
+      runSingleShot() {
+        assert.fail('async worker must not call the sync runtime');
+      },
+      async runSingleShotAsync(input, options) {
+        launches += 1;
+        const parser = createProviderWrapperProtocolParser({
+          binding: {
+            invocationId,
+            requestDigest: request.requestDigest,
+            attemptId: input.acceptanceBinding.executionAttemptId,
+          },
+        });
+        const stream = Buffer.from(
+          [
+            {
+              schemaVersion: 1 as const,
+              type: 'hello' as const,
+              sequence: 1,
+              protocol: 'harness-jsonl-v1' as const,
+            },
+            {
+              schemaVersion: 1 as const,
+              type: 'progress' as const,
+              sequence: 2,
+              phase: 'tool' as const,
+            },
+            {
+              schemaVersion: 1 as const,
+              type: 'result' as const,
+              sequence: 3,
+              outputSlot: 'primary' as const,
+            },
+          ]
+            .map(renderProviderWrapperFrame)
+            .join(''),
+          'utf8',
+        );
+        parser.push(stream);
+        protocolReceipt = parser.finish({ cancellationForced: false });
+        options.onActivity?.({ type: 'spawned', elapsedMs: 0 });
+        options.onActivity?.({
+          type: 'stdout',
+          elapsedMs: 1,
+          bytes: stream.length,
+        });
+        options.onActivity?.({ type: 'exited', elapsedMs: 2 });
+        return {
+          ...successfulWorkerReport(request, invocationId),
+          elapsedMs: 2,
+          wrapperProtocolReceipt: protocolReceipt,
+        };
+      },
+    };
+
+    const completed = await runProviderWorkerAsync(repository, invocationId, {
+      agentRuntime,
+    });
+    assert.ok(completed.completionReceipt);
+    assert.equal(completed.completionReceipt.schemaVersion, 2);
+    assert.ok('protocolReceipt' in completed.completionReceipt);
+    assert.deepEqual(
+      (
+        completed.completionReceipt as unknown as {
+          protocolReceipt: unknown;
+        }
+      ).protocolReceipt,
+      protocolReceipt,
+    );
+    const durable = readProviderInvocation(runtime, invocationId);
+    assert.deepEqual(durable.runtimeReceipt, completed.completionReceipt);
+
+    const replayed = await runProviderWorkerAsync(repository, invocationId, {
+      agentRuntime,
+    });
+    assert.equal(replayed.launched, false);
+    assert.deepEqual(replayed.completionReceipt, completed.completionReceipt);
+    assert.equal(launches, 1);
+
+    const statePath = path.join(
+      runtime.invocations,
+      invocationId,
+      'state.json',
+    );
+    const originalState = fs.readFileSync(statePath, 'utf8');
+    const unknownVersion = JSON.parse(originalState) as {
+      runtimeReceipt: Record<string, unknown>;
+    };
+    unknownVersion.runtimeReceipt.schemaVersion = 3;
+    const unknownVersionPayload = { ...unknownVersion.runtimeReceipt };
+    delete unknownVersionPayload.receiptDigest;
+    unknownVersion.runtimeReceipt.receiptDigest = sha256(
+      canonicalJson(unknownVersionPayload),
+    );
+    fs.writeFileSync(statePath, `${canonicalJson(unknownVersion)}\n`);
+    await assert.rejects(
+      () => runProviderWorkerAsync(repository, invocationId, { agentRuntime }),
+      (error: unknown) =>
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'PROVIDER_INVOCATION_INVALID',
+    );
+    assert.equal(launches, 1, 'unknown receipt versions must not relaunch');
+
+    fs.writeFileSync(statePath, originalState);
+    const tampered = JSON.parse(originalState) as {
+      runtimeReceipt: Record<string, unknown> & {
+        protocolReceipt: Record<string, unknown>;
+      };
+    };
+    const mismatchedAttemptId = 'attempt-mismatched-wrapper-receipt';
+    tampered.runtimeReceipt.executionAttemptId = mismatchedAttemptId;
+    tampered.runtimeReceipt.protocolReceipt.attemptId = mismatchedAttemptId;
+    const protocolPayload = { ...tampered.runtimeReceipt.protocolReceipt };
+    delete protocolPayload.receiptDigest;
+    tampered.runtimeReceipt.protocolReceipt.receiptDigest = sha256(
+      canonicalJson(protocolPayload),
+    );
+    const runtimePayload = { ...tampered.runtimeReceipt };
+    delete runtimePayload.receiptDigest;
+    tampered.runtimeReceipt.receiptDigest = sha256(
+      canonicalJson(runtimePayload),
+    );
+    fs.writeFileSync(statePath, `${canonicalJson(tampered)}\n`);
+
+    await assert.rejects(
+      () => runProviderWorkerAsync(repository, invocationId, { agentRuntime }),
+      (error: unknown) =>
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'PROVIDER_INVOCATION_INVALID',
+    );
+    assert.equal(launches, 1, 'tampered terminal replay must not relaunch');
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
 
 test('provider worker records launch and admission failure durably', () => {
   const repository = createFixtureRepository();

@@ -63,6 +63,10 @@ import type {
   AgentRuntimeProcessProgressProjection,
   ProviderInvocationAcceptanceBinding,
 } from '../../modules/provider-orchestration/agent-runtime-port.ts';
+import {
+  assertProviderWrapperProtocolReceipt,
+  type ProviderWrapperProtocolReceipt,
+} from '../../modules/provider-orchestration/agent-runtime-protocol.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../provider-execution/provider-runner.ts';
 import {
   INVESTIGATION_LIMITS,
@@ -1008,6 +1012,10 @@ export function readProviderInvocationRuntimeReceipt(
     attempt.jobId !== receipt.executionJobId ||
     attempt.legacyInvocation?.invocationId !== receipt.invocationId ||
     attempt.legacyInvocation.legacyRevision !== receipt.terminalRevision ||
+    (receipt.schemaVersion === 2 &&
+      (receipt.protocolReceipt.invocationId !== receipt.invocationId ||
+        receipt.protocolReceipt.requestDigest !== receipt.requestDigest ||
+        receipt.protocolReceipt.attemptId !== attempt.attemptId)) ||
     !terminalStatusMatches
   ) {
     throw invocationInvalid();
@@ -2312,6 +2320,14 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(
   ) {
     throw providerAcceptanceBindingStale();
   }
+  const protocolReceipt = assertSuccessfulRunnerProtocolReceipt(
+    input.report.wrapperProtocolReceipt,
+    request,
+    input.acceptanceBinding,
+  );
+  if (protocolReceipt !== undefined && input.runtimeProgress === undefined) {
+    throw invocationInvalid();
+  }
   assertOwned();
   const completed = withCurrentProviderPromptContext(
     paths.root,
@@ -2341,6 +2357,7 @@ export function completeProviderInvocationFromRunnerUnderLifecycleLock(
                   acceptanceBinding: input.acceptanceBinding,
                   terminalState: 'succeeded',
                   progress: input.runtimeProgress,
+                  ...(protocolReceipt === undefined ? {} : { protocolReceipt }),
                 });
           persistProviderCompletionCandidate(paths, {
             current,
@@ -2897,6 +2914,7 @@ function createAgentRuntimeCompletionReceipt(input: {
   acceptanceBinding: ProviderInvocationAcceptanceBinding;
   terminalState: 'succeeded' | 'failed';
   progress: AgentRuntimeProcessProgressProjection;
+  protocolReceipt?: ProviderWrapperProtocolReceipt;
 }): AgentRuntimeCompletionReceipt {
   assertProviderAcceptanceBinding(input.acceptanceBinding);
   if (
@@ -2911,8 +2929,7 @@ function createAgentRuntimeCompletionReceipt(input: {
     throw providerAcceptanceBindingStale();
   }
   const progress = assertAgentRuntimeProcessProgress(input.progress);
-  const payload = {
-    schemaVersion: 1 as const,
+  const fields = {
     kind: 'agent-runtime-completion-receipt' as const,
     invocationId: input.current.invocationId,
     requestDigest: input.request.requestDigest,
@@ -2928,10 +2945,51 @@ function createAgentRuntimeCompletionReceipt(input: {
     launched: true as const,
     progress,
   };
+  const payload =
+    input.protocolReceipt === undefined
+      ? { schemaVersion: 1 as const, ...fields }
+      : {
+          schemaVersion: 2 as const,
+          ...fields,
+          protocolReceipt: assertSuccessfulRunnerProtocolReceipt(
+            input.protocolReceipt,
+            input.request,
+            input.acceptanceBinding,
+          )!,
+        };
   return assertAgentRuntimeCompletionReceipt({
     ...payload,
     receiptDigest: sha256(canonicalJson(payload)),
   });
+}
+
+function assertSuccessfulRunnerProtocolReceipt(
+  value: ProviderWrapperProtocolReceipt | undefined,
+  request: ProviderInvocationRequest,
+  acceptanceBinding: ProviderInvocationAcceptanceBinding,
+): ProviderWrapperProtocolReceipt | undefined {
+  if (value === undefined) return undefined;
+  let receipt: ProviderWrapperProtocolReceipt;
+  try {
+    receipt = assertProviderWrapperProtocolReceipt(value, {
+      invocationId: request.invocationId,
+      requestDigest: request.requestDigest,
+      attemptId: acceptanceBinding.executionAttemptId,
+    });
+  } catch {
+    throw invocationInvalid();
+  }
+  if (
+    receipt.terminal !== 'result' ||
+    receipt.outputSlot !== 'primary' ||
+    receipt.errorCode !== null ||
+    receipt.cancellation.requested ||
+    receipt.cancellation.acknowledged ||
+    receipt.cancellation.forced
+  ) {
+    throw invocationInvalid();
+  }
+  return receipt;
 }
 
 function withProviderWorkerLifecycle<T>(
@@ -4224,9 +4282,10 @@ function assertAgentRuntimeCompletionReceipt(
       'terminalState',
       'launched',
       'progress',
+      ...(value.schemaVersion === 2 ? ['protocolReceipt'] : []),
       'receiptDigest',
     ]) ||
-    value.schemaVersion !== 1 ||
+    (value.schemaVersion !== 1 && value.schemaVersion !== 2) ||
     value.kind !== 'agent-runtime-completion-receipt' ||
     typeof value.invocationId !== 'string' ||
     !isDigest(value.requestDigest) ||
@@ -4252,9 +4311,34 @@ function assertAgentRuntimeCompletionReceipt(
   }
   assertInvocationId(value.invocationId);
   const progress = assertAgentRuntimeProcessProgress(value.progress);
+  let protocolReceipt: ProviderWrapperProtocolReceipt | undefined;
+  if (value.schemaVersion === 2) {
+    try {
+      protocolReceipt = assertProviderWrapperProtocolReceipt(
+        value.protocolReceipt,
+        {
+          invocationId: value.invocationId,
+          requestDigest: value.requestDigest as string,
+          attemptId: value.executionAttemptId as string,
+        },
+      );
+    } catch {
+      throw invocationInvalid();
+    }
+  }
   if (
     (value.terminalState === 'succeeded' &&
       progress.processState !== 'exited') ||
+    (protocolReceipt !== undefined &&
+      (value.terminalState !== 'succeeded' ||
+        protocolReceipt.terminal !== 'result' ||
+        protocolReceipt.outputSlot !== 'primary' ||
+        protocolReceipt.errorCode !== null ||
+        protocolReceipt.cancellation.requested ||
+        protocolReceipt.cancellation.acknowledged ||
+        protocolReceipt.cancellation.forced ||
+        progress.lastProviderActivityElapsedMs === null ||
+        progress.stdoutBytes < protocolReceipt.aggregateBytes)) ||
     sha256(
       canonicalJson(
         Object.fromEntries(
@@ -4266,7 +4350,11 @@ function assertAgentRuntimeCompletionReceipt(
     throw invocationInvalid();
   }
   return deepFreeze(
-    structuredClone({ ...value, progress }) as AgentRuntimeCompletionReceipt,
+    structuredClone({
+      ...value,
+      progress,
+      ...(protocolReceipt === undefined ? {} : { protocolReceipt }),
+    }) as AgentRuntimeCompletionReceipt,
   );
 }
 
