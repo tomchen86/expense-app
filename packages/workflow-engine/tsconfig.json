@@ -25,6 +25,7 @@
       "@jigwright/core/data-authorization-policy-port": [
         "../core/src/data-authorization-policy-port.ts"
       ],
+      "@jigwright/core/evidence-node": ["../core/src/evidence-node.ts"],
       "@jigwright/core/job-attempt-runtime": [
         "../core/src/job-attempt-runtime.ts"
       ],

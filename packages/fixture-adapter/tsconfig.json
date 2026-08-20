@@ -15,6 +15,7 @@
         "../core/src/check-registry-port.ts"
       ],
       "@jigwright/core/contract-values": ["../core/src/contract-values.ts"],
+      "@jigwright/core/evidence-node": ["../core/src/evidence-node.ts"],
       "@jigwright/core/managed-transition-trailers": [
         "../core/src/managed-transition-trailers.ts"
       ],

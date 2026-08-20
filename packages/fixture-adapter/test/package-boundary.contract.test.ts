@@ -19,6 +19,7 @@ test('@jigwright/fixture-adapter has one-way public package dependencies', () =>
   ]);
   assert.deepEqual(Object.keys(manifest.exports ?? {}).sort(), [
     '.',
+    './evidence-node',
     './managed-transition-reader',
     './session-runtime-layout',
     './tracked-object-reader',
