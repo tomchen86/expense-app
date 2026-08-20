@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
 
+import type { ProviderDefinitionSnapshot } from '@jigwright/agent-runtime';
+
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   ExitCode,
@@ -199,6 +201,7 @@ export type ProviderRunnerReport = {
   residuals: string[];
   executable: ProviderExecutableIdentity;
   elapsedMs: number;
+  providerDefinitionSnapshot: ProviderDefinitionSnapshot;
   wrapperProtocolReceipt?: ProviderWrapperProtocolReceipt;
 };
 
@@ -223,7 +226,7 @@ export type ProviderProcessResult = {
  * lifecycle-owned provider runner. Fake-process evaluation retains `null` so a
  * deterministic test seam can never be mistaken for an observed real launch.
  */
-export type ProviderRuntimeObservation = {
+type ProviderRuntimeObservationBase = {
   assurance: 'unchanged-governed-projection';
   projection: {
     unchanged: true;
@@ -236,6 +239,18 @@ export type ProviderRuntimeObservation = {
   executable: ProviderExecutableIdentity;
   elapsedMs: number;
 };
+
+export type ProviderRuntimeObservation = ProviderRuntimeObservationBase &
+  (
+    | {
+        providerDefinitionSnapshot?: never;
+        providerDefinitionBindingDigest?: never;
+      }
+    | {
+        providerDefinitionSnapshot: ProviderDefinitionSnapshot;
+        providerDefinitionBindingDigest: string;
+      }
+  );
 
 const REQUEST_INPUT_KEYS = [
   'invocationId',

@@ -1,15 +1,6 @@
 import { canonicalJson } from '../../../foundation/canonical-json/canonical-json.ts';
 import type { ProviderInvocationPlan } from '../../../modules/provider-orchestration/provider-contracts.ts';
-
-/**
- * Fixed, code-owned absolute Claude executable candidates per platform. Deeply
- * frozen and limited to the canonical Homebrew and `/usr/local` locations; the
- * Claude desktop application bundle is deliberately excluded because it is not a
- * reviewed read-only CLI entrypoint.
- */
-export const CLAUDE_EXECUTABLE_CANDIDATES = Object.freeze({
-  darwin: Object.freeze(['/opt/homebrew/bin/claude', '/usr/local/bin/claude']),
-}) as Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>>;
+export { CLAUDE_EXECUTABLE_CANDIDATES } from '../built-in-provider-definition.ts';
 
 /**
  * The reviewed help flags a resolved Claude executable must advertise before the

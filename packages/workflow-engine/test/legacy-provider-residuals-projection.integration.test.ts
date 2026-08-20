@@ -34,7 +34,12 @@ import {
 } from '../src/runtime/storage-journal/provider-invocation-store.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
-import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
+import {
+  builtInProviderDefinitionSnapshotForTest,
+  createFixtureRepository,
+  git,
+  isWorkflowError,
+} from './fixture.ts';
 
 const CHANGE_ID = 'demo-change';
 const COMPLETED_AT = '2026-07-25T16:00:07.514Z';
@@ -336,6 +341,9 @@ function workerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 7,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }
 

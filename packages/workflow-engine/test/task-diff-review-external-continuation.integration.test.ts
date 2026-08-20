@@ -64,6 +64,8 @@ import {
   git,
   sourceRepositoryRoot,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
+  builtInProviderExecutableIdentityForTest,
 } from './fixture.ts';
 
 test('provider review reaches FAR only through an authenticated external continuation and replays after crash', () => {
@@ -833,8 +835,11 @@ function completeFakeProvider(
         },
         sameUserProcessConfined: false as const,
         residuals: [...PROVIDER_RUNNER_RESIDUALS],
-        executable: executableIdentity(),
+        executable: builtInProviderExecutableIdentityForTest(input.providerId),
         elapsedMs: 7,
+        providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+          input.providerId,
+        ),
       };
     },
   });

@@ -55,6 +55,7 @@ import {
   type ProviderInvocationRequest,
   type ProviderProcessOutcome,
   type ProviderProcessResult,
+  type ProviderExecutableIdentity,
   type ProviderRunnerReport,
   type ProviderRuntimeObservation,
 } from '../../modules/provider-orchestration/provider-contracts.ts';
@@ -68,6 +69,7 @@ import {
   type ProviderWrapperProtocolReceipt,
 } from '../../modules/provider-orchestration/agent-runtime-protocol.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../provider-execution/provider-runner.ts';
+import { assertKnownBuiltInProviderDefinitionSnapshot } from '../provider-execution/built-in-provider-definition.ts';
 import {
   INVESTIGATION_LIMITS,
   normalizeInvestigationTerm,
@@ -4791,6 +4793,7 @@ function providerResultFromRunnerReport(
     report.providerId !== request.providerId ||
     report.purpose !== request.purpose ||
     report.requestDigest !== request.requestDigest ||
+    report.providerDefinitionSnapshot === undefined ||
     report.semanticOutputDigest !== sha256(canonicalJson(report.semanticOutput))
   ) {
     throw resultInvalid();
@@ -4806,6 +4809,26 @@ function providerResultFromRunnerReport(
     throw resultInvalid();
   }
   const output = deepFreeze(structuredClone(report.semanticOutput));
+  let providerDefinitionSnapshot: ProviderRunnerReport['providerDefinitionSnapshot'];
+  try {
+    if (!isExecutableIdentity(report.executable)) throw resultInvalid();
+    providerDefinitionSnapshot = assertKnownBuiltInProviderDefinitionSnapshot(
+      report.providerDefinitionSnapshot,
+      {
+        providerId: request.providerId,
+        executableCandidatePath: report.executable.candidatePath,
+      },
+    );
+  } catch {
+    throw resultInvalid();
+  }
+  const providerDefinitionEvidence = {
+    providerDefinitionSnapshot,
+    providerDefinitionBindingDigest: providerDefinitionExecutableBindingDigest(
+      providerDefinitionSnapshot.definitionDigest,
+      report.executable,
+    ),
+  };
   const runtimeObservation = assertRuntimeObservation(
     {
       assurance: report.assurance,
@@ -4814,6 +4837,7 @@ function providerResultFromRunnerReport(
       residuals: report.residuals,
       executable: report.executable,
       elapsedMs: report.elapsedMs,
+      ...providerDefinitionEvidence,
     },
     request,
   );
@@ -4871,16 +4895,35 @@ function assertRuntimeObservation(
   if (value === null) {
     return null;
   }
+  const hasProviderDefinitionSnapshot =
+    isRecord(value) && value.providerDefinitionSnapshot !== undefined;
+  const hasProviderDefinitionBindingDigest =
+    isRecord(value) && value.providerDefinitionBindingDigest !== undefined;
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, [
-      'assurance',
-      'projection',
-      'sameUserProcessConfined',
-      'residuals',
-      'executable',
-      'elapsedMs',
-    ]) ||
+    hasProviderDefinitionSnapshot !== hasProviderDefinitionBindingDigest ||
+    !hasExactKeys(
+      value,
+      !hasProviderDefinitionSnapshot
+        ? [
+            'assurance',
+            'projection',
+            'sameUserProcessConfined',
+            'residuals',
+            'executable',
+            'elapsedMs',
+          ]
+        : [
+            'assurance',
+            'projection',
+            'sameUserProcessConfined',
+            'residuals',
+            'executable',
+            'elapsedMs',
+            'providerDefinitionSnapshot',
+            'providerDefinitionBindingDigest',
+          ],
+    ) ||
     value.assurance !== 'unchanged-governed-projection' ||
     value.sameUserProcessConfined !== false ||
     !isRecord(value.projection) ||
@@ -4903,6 +4946,31 @@ function assertRuntimeObservation(
   ) {
     throw resultInvalid();
   }
+  if (hasProviderDefinitionSnapshot) {
+    try {
+      const providerDefinitionSnapshot =
+        assertKnownBuiltInProviderDefinitionSnapshot(
+          value.providerDefinitionSnapshot,
+          {
+            providerId: request.providerId,
+            executableCandidatePath: (
+              value.executable as ProviderExecutableIdentity
+            ).candidatePath,
+          },
+        );
+      if (
+        value.providerDefinitionBindingDigest !==
+        providerDefinitionExecutableBindingDigest(
+          providerDefinitionSnapshot.definitionDigest,
+          value.executable as ProviderExecutableIdentity,
+        )
+      ) {
+        throw resultInvalid();
+      }
+    } catch {
+      throw resultInvalid();
+    }
+  }
   // A durable record written before a residual was named carries the list of
   // its own day. Reading it means classifying that list rather than demanding
   // today's, and classification still refuses every shape no writer of this
@@ -4916,6 +4984,18 @@ function assertRuntimeObservation(
     throw resultInvalid();
   }
   return deepFreeze(structuredClone(value)) as ProviderRuntimeObservation;
+}
+
+function providerDefinitionExecutableBindingDigest(
+  providerDefinitionDigest: string,
+  executable: ProviderExecutableIdentity,
+): string {
+  return sha256(
+    canonicalJson({
+      providerDefinitionDigest,
+      executable,
+    }),
+  );
 }
 
 function isExecutableIdentity(value: unknown): boolean {

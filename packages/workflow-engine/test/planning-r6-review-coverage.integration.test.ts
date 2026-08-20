@@ -44,6 +44,7 @@ import {
   git,
   isWorkflowError,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
 } from './fixture.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
@@ -936,6 +937,9 @@ function fakePlanReviewRunnerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 5,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }
 

@@ -29,7 +29,12 @@ import {
   type ProviderRunnerReport,
 } from '../src/runtime/provider-execution/provider-runner.ts';
 import { runProviderWorker } from '../src/entrypoints/worker/provider-worker.ts';
-import { createFixtureRepository, git, isWorkflowError } from './fixture.ts';
+import {
+  builtInProviderDefinitionSnapshotForTest,
+  createFixtureRepository,
+  git,
+  isWorkflowError,
+} from './fixture.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 
 const CHANGE_ID = 'amended-executed-change';
@@ -808,6 +813,9 @@ function fakeRunnerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 5,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }
 

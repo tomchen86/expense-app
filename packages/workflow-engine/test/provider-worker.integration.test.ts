@@ -38,6 +38,7 @@ import {
   createProviderInvocationRequest,
   PROPOSE_POLICY_DIGEST,
   type ProviderInvocationRequest,
+  type ProviderRunnerReport,
 } from '../src/modules/provider-orchestration/provider-contracts.ts';
 import {
   claimProviderInvocationForWorker,
@@ -58,6 +59,7 @@ import {
 } from '../src/runtime/provider-execution/provider-execution-governance.ts';
 import { startPropose } from '../src/application/propose/propose-orchestrator.ts';
 import { PROVIDER_RUNNER_RESIDUALS } from '../src/runtime/provider-execution/provider-runner.ts';
+import { resolveBuiltInProviderDefinitionSnapshot } from '../src/runtime/provider-execution/built-in-provider-definition.ts';
 import { createAsyncCliDispatcherForTesting } from '../src/cli.ts';
 import {
   createProviderWorkerDispatcherForTesting,
@@ -180,6 +182,8 @@ for (const objectFormat of ['sha1', 'sha256'] as const) {
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
             executable: executableIdentity(),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              resolveBuiltInProviderDefinitionSnapshot('claude', 'darwin')!,
           };
         },
       };
@@ -246,6 +250,23 @@ for (const objectFormat of ['sha1', 'sha256'] as const) {
         durable.result?.runtimeObservation?.residuals,
         PROVIDER_RUNNER_RESIDUALS,
       );
+      const definitionSnapshot = resolveBuiltInProviderDefinitionSnapshot(
+        'claude',
+        'darwin',
+      )!;
+      assert.deepEqual(
+        durable.result?.runtimeObservation?.providerDefinitionSnapshot,
+        definitionSnapshot,
+      );
+      assert.equal(
+        durable.result?.runtimeObservation?.providerDefinitionBindingDigest,
+        sha256(
+          canonicalJson({
+            providerDefinitionDigest: definitionSnapshot.definitionDigest,
+            executable: executableIdentity(),
+          }),
+        ),
+      );
 
       const replayed = await runProviderWorkerAsync(repository, invocationId, {
         agentRuntime,
@@ -261,6 +282,68 @@ for (const objectFormat of ['sha1', 'sha256'] as const) {
         invocationId,
         'state.json',
       );
+      const originalState = fs.readFileSync(statePath, 'utf8');
+      const definitionTampered = JSON.parse(originalState) as {
+        result: {
+          runtimeObservation: {
+            providerDefinitionSnapshot: Record<string, unknown>;
+            providerDefinitionBindingDigest: string;
+            executable: ReturnType<typeof executableIdentity>;
+          };
+        };
+      };
+      const tamperedSnapshot =
+        definitionTampered.result.runtimeObservation.providerDefinitionSnapshot;
+      tamperedSnapshot.commandProfile = 'caller-replaced-command-profile-v1';
+      const tamperedDefinitionPayload = { ...tamperedSnapshot };
+      delete tamperedDefinitionPayload.definitionDigest;
+      tamperedSnapshot.definitionDigest = sha256(
+        canonicalJson(tamperedDefinitionPayload),
+      );
+      definitionTampered.result.runtimeObservation.providerDefinitionBindingDigest =
+        sha256(
+          canonicalJson({
+            providerDefinitionDigest: tamperedSnapshot.definitionDigest,
+            executable: definitionTampered.result.runtimeObservation.executable,
+          }),
+        );
+      fs.writeFileSync(statePath, `${canonicalJson(definitionTampered)}\n`);
+      await assert.rejects(
+        () =>
+          runProviderWorkerAsync(repository, invocationId, { agentRuntime }),
+        (error: unknown) =>
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'PROVIDER_INVOCATION_RESULT_INVALID',
+      );
+      assert.equal(
+        launches,
+        1,
+        'a recomputed unknown definition must not relaunch',
+      );
+
+      fs.writeFileSync(statePath, originalState);
+      const executableTampered = JSON.parse(originalState) as {
+        result: {
+          runtimeObservation: {
+            executable: { sha256: string };
+          };
+        };
+      };
+      executableTampered.result.runtimeObservation.executable.sha256 =
+        'c'.repeat(64);
+      fs.writeFileSync(statePath, `${canonicalJson(executableTampered)}\n`);
+      await assert.rejects(
+        () =>
+          runProviderWorkerAsync(repository, invocationId, { agentRuntime }),
+        (error: unknown) =>
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'PROVIDER_INVOCATION_RESULT_INVALID',
+      );
+      assert.equal(launches, 1, 'executable identity drift must not relaunch');
+
+      fs.writeFileSync(statePath, originalState);
       const tampered = JSON.parse(fs.readFileSync(statePath, 'utf8')) as {
         runtimeReceipt: Record<string, unknown>;
       };
@@ -682,6 +765,49 @@ test('provider worker records launch and admission failure durably', () => {
       },
     });
     assert.equal(replayed.state, 'failed');
+    assert.equal(replayed.launched, false);
+    assert.equal(launches, 1);
+  } finally {
+    fs.rmSync(repository, { recursive: true, force: true });
+  }
+});
+
+test('provider worker refuses a current report that omits provider definition evidence', () => {
+  const repository = createFixtureRepository();
+  const changeId = 'worker-definition-evidence-required';
+  try {
+    git(repository, ['checkout', '-b', `work/${changeId}`]);
+    const started = startPropose(repository, changeId, intent(), {
+      explicitActor: 'codex',
+      environment: {},
+    });
+    const invocationId = started.investigation!.providerInvocationId;
+    const locator = discoverRepository(repository);
+    const runtime = investigationRuntimePaths(
+      locator.gitCommonDirectory,
+      'workflow-engine',
+    );
+    const request = readProviderInvocationRequest(runtime, invocationId);
+    let launches = 0;
+
+    const failed = runProviderWorker(repository, invocationId, {
+      runner() {
+        launches += 1;
+        const report = successfulWorkerReport(request, invocationId);
+        const { providerDefinitionSnapshot: _omitted, ...withoutDefinition } =
+          report;
+        return withoutDefinition as unknown as ProviderRunnerReport;
+      },
+    });
+
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.failure?.code, 'PROVIDER_INVOCATION_RESULT_INVALID');
+    const replayed = runProviderWorker(repository, invocationId, {
+      runner() {
+        launches += 1;
+        assert.fail('invalid current reports must not relaunch');
+      },
+    });
     assert.equal(replayed.launched, false);
     assert.equal(launches, 1);
   } finally {
@@ -1205,6 +1331,10 @@ test('provider worker selects the code-owned exact PlanReview contract', () => {
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
           executable: executableIdentity(),
           elapsedMs: 8,
+          providerDefinitionSnapshot: resolveBuiltInProviderDefinitionSnapshot(
+            'claude',
+            'darwin',
+          )!,
         };
       },
     });
@@ -1269,6 +1399,10 @@ function successfulWorkerReport(
     residuals: [...PROVIDER_RUNNER_RESIDUALS],
     executable: executableIdentity(),
     elapsedMs: 7,
+    providerDefinitionSnapshot: resolveBuiltInProviderDefinitionSnapshot(
+      request.providerId,
+      'darwin',
+    )!,
   };
 }
 

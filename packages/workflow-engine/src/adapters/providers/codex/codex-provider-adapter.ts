@@ -1,19 +1,5 @@
 import type { ProviderInvocationPlan } from '../../../modules/provider-orchestration/provider-contracts.ts';
-
-/**
- * Fixed, code-owned absolute Codex executable candidates per platform. The list
- * is deeply frozen so no caller can extend it, and it deliberately omits any
- * caller-`PATH`, repository, or dynamically discovered location. macOS ships the
- * ChatGPT-bundled Codex first, then the canonical Homebrew and `/usr/local`
- * locations.
- */
-export const CODEX_EXECUTABLE_CANDIDATES = Object.freeze({
-  darwin: Object.freeze([
-    '/Applications/ChatGPT.app/Contents/Resources/codex',
-    '/opt/homebrew/bin/codex',
-    '/usr/local/bin/codex',
-  ]),
-}) as Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>>;
+export { CODEX_EXECUTABLE_CANDIDATES } from '../built-in-provider-definition.ts';
 
 /**
  * The reviewed flags a resolved Codex executable must advertise on its root

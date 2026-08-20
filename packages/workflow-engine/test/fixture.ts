@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { ProviderDefinitionSnapshot } from '@jigwright/agent-runtime';
+
 import { canonicalJson } from '../src/foundation/canonical-json/canonical-json.ts';
 import {
   loadChangeContract,
@@ -30,6 +32,8 @@ import {
   validateInvestigationFirstPlanningReadiness,
 } from '../src/modules/assurance/planning-assurance-validator.ts';
 import { admitRoleResult } from '../src/modules/provider-orchestration/role-scheduler.ts';
+import type { ProviderId } from '../src/modules/provider-orchestration/provider-registry.ts';
+import { resolveBuiltInProviderDefinitionSnapshot } from '../src/runtime/provider-execution/built-in-provider-definition.ts';
 
 export const sourceRepositoryRoot = path.resolve(
   import.meta.dirname,
@@ -37,6 +41,40 @@ export const sourceRepositoryRoot = path.resolve(
 );
 
 let openSpecAssetTemplateRoot: string | undefined;
+
+export function builtInProviderDefinitionSnapshotForTest(
+  providerId: ProviderId,
+): ProviderDefinitionSnapshot {
+  const snapshot = resolveBuiltInProviderDefinitionSnapshot(
+    providerId,
+    'darwin',
+  );
+  if (snapshot === null) {
+    throw new TypeError('Fixture built-in provider definition is unavailable.');
+  }
+  return snapshot;
+}
+
+export function builtInProviderExecutableIdentityForTest(
+  providerId: ProviderId,
+) {
+  const executable =
+    providerId === 'codex'
+      ? '/opt/homebrew/bin/codex'
+      : '/opt/homebrew/bin/claude';
+  return {
+    candidatePath: executable,
+    realPath: executable,
+    device: '1',
+    inode: '2',
+    mode: 0o100755,
+    uid: 501,
+    gid: 20,
+    size: 1024,
+    mtimeNs: '123456789',
+    sha256: 'b'.repeat(64),
+  };
+}
 
 export function createFixtureRepository(
   options: { objectFormat?: 'sha1' | 'sha256' } = {},

@@ -92,6 +92,7 @@ import {
   git,
   isWorkflowError,
   sourceRepositoryRoot,
+  builtInProviderDefinitionSnapshotForTest,
 } from './fixture.ts';
 import { loadWorkflowConformanceVectors } from './support/conformance-vectors.ts';
 
@@ -2362,6 +2363,9 @@ function fakeProviderRunnerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 5,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }
 

@@ -39,7 +39,10 @@ import {
   checkSession,
   startSession,
 } from '../src/application/execute-task/session.ts';
-import { isWorkflowError } from './fixture.ts';
+import {
+  builtInProviderDefinitionSnapshotForTest,
+  isWorkflowError,
+} from './fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
 
 const CHANGE_ID = 'implementation-reconciliation';
@@ -451,6 +454,9 @@ function fakePlanReviewRunnerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 5,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }
 

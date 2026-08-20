@@ -61,6 +61,7 @@ import {
   type ProviderRunnerHost,
 } from '../src/runtime/provider-execution/provider-runner.ts';
 import { spawnBoundedProviderProcess } from '../src/runtime/provider-execution/bounded-provider-process.ts';
+import { resolveBuiltInProviderDefinitionSnapshot } from '../src/runtime/provider-execution/built-in-provider-definition.ts';
 import type { ProviderWrapperProtocolReceipt } from '../src/modules/provider-orchestration/agent-runtime-protocol.ts';
 import {
   createFixtureRepository,
@@ -116,6 +117,16 @@ test('built-in adapters publish fixed candidates and capability-specific argv', 
   assert.equal(Object.isFrozen(CODEX_EXECUTABLE_CANDIDATES.darwin), true);
   assert.equal(Object.isFrozen(CLAUDE_EXECUTABLE_CANDIDATES), true);
   assert.equal(Object.isFrozen(CLAUDE_EXECUTABLE_CANDIDATES.darwin), true);
+  assert.deepEqual(
+    resolveBuiltInProviderDefinitionSnapshot('claude', 'darwin')
+      ?.executableCandidates,
+    CLAUDE_EXECUTABLE_CANDIDATES.darwin,
+  );
+  assert.deepEqual(
+    resolveBuiltInProviderDefinitionSnapshot('codex', 'darwin')
+      ?.executableCandidates,
+    CODEX_EXECUTABLE_CANDIDATES.darwin,
+  );
 
   const codex = buildCodexProviderInvocation({
     executable: '/real/codex',
@@ -911,6 +922,15 @@ test('runner wraps provider-native output only after unchanged governed projecti
         'STALE_CONCURRENCY_SLOT_PID_REUSE_NOT_DETECTABLE',
       ),
     );
+    assert.deepEqual(
+      report.providerDefinitionSnapshot,
+      resolveBuiltInProviderDefinitionSnapshot('claude', 'darwin'),
+    );
+    assert.ok(
+      report.providerDefinitionSnapshot?.executableCandidates.includes(
+        report.executable.candidatePath,
+      ),
+    );
     for (const name of ['prompt.json', 'schema.json', 'semantic-output.json']) {
       const stats = fs.lstatSync(
         path.join(fixture.input.invocationDirectory, 'runtime', name),
@@ -919,6 +939,35 @@ test('runner wraps provider-native output only after unchanged governed projecti
       assert.equal(stats.isSymbolicLink(), false);
       assert.equal(stats.mode & 0o777, 0o600);
     }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('fixed Codex launch binds the code-owned provider definition snapshot', () => {
+  const fixture = createRunnerFixture('codex');
+  try {
+    const report = createProviderRunnerForTesting(
+      codexRunnerHost((input) => {
+        const outputIndex = input.args.indexOf('--output-last-message');
+        assert.ok(outputIndex >= 0);
+        fs.writeFileSync(
+          input.args[outputIndex + 1]!,
+          canonicalJson(semanticOutput(fixture.request)),
+        );
+        return successfulProbe('{"type":"turn.completed"}\n');
+      }),
+    ).run(fixture.input, { platform: 'darwin' });
+
+    assert.deepEqual(
+      report.providerDefinitionSnapshot,
+      resolveBuiltInProviderDefinitionSnapshot('codex', 'darwin'),
+    );
+    assert.ok(
+      report.providerDefinitionSnapshot?.executableCandidates.includes(
+        report.executable.candidatePath,
+      ),
+    );
   } finally {
     fixture.cleanup();
   }

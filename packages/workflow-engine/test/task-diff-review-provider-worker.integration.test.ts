@@ -60,6 +60,8 @@ import {
   sourceRepositoryRoot,
   syncOriginMain,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
+  builtInProviderExecutableIdentityForTest,
 } from './fixture.ts';
 
 test('activated final task review binds documentation closure into commit and CI replay', async () => {
@@ -94,8 +96,10 @@ test('activated final task review binds documentation closure into commit and CI
           },
           sameUserProcessConfined: false,
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
-          executable: executableIdentity(),
+          executable: builtInProviderExecutableIdentityForTest('claude'),
           elapsedMs: 8,
+          providerDefinitionSnapshot:
+            builtInProviderDefinitionSnapshotForTest('claude'),
         };
       },
     });
@@ -446,8 +450,13 @@ test('provider worker durably executes the code-owned TaskDiffReview contract wi
           },
           sameUserProcessConfined: false,
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
-          executable: executableIdentity(),
+          executable: builtInProviderExecutableIdentityForTest(
+            input.providerId,
+          ),
           elapsedMs: 8,
+          providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+            input.providerId,
+          ),
         };
       },
     });
@@ -726,8 +735,11 @@ function completeProviderInvocation(
         },
         sameUserProcessConfined: false,
         residuals: [...PROVIDER_RUNNER_RESIDUALS],
-        executable: executableIdentity(),
+        executable: builtInProviderExecutableIdentityForTest(input.providerId),
         elapsedMs: 8,
+        providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+          input.providerId,
+        ),
       };
     },
   });

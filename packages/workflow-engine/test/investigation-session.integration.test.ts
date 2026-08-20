@@ -132,6 +132,7 @@ import {
   isWorkflowError,
   runtimeRoot,
   sourceRepositoryRoot,
+  builtInProviderDefinitionSnapshotForTest,
 } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
@@ -8453,6 +8454,9 @@ function fakeRunnerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 5,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }
 

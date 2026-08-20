@@ -38,6 +38,7 @@ import {
   isWorkflowError,
   sourceRepositoryRoot,
   writeLegacyGoverningPlan,
+  builtInProviderDefinitionSnapshotForTest,
 } from './fixture.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
 import {
@@ -681,5 +682,8 @@ function fakeRunnerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 5,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }

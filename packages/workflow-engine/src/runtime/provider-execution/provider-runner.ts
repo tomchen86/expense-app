@@ -10,12 +10,10 @@ import {
 import { canonicalJson } from '../../foundation/canonical-json/canonical-json.ts';
 import {
   buildClaudeProviderInvocation,
-  CLAUDE_EXECUTABLE_CANDIDATES,
   CLAUDE_REQUIRED_HELP_FLAGS,
 } from '../../adapters/providers/claude/claude-provider-adapter.ts';
 import {
   buildCodexProviderInvocation,
-  CODEX_EXECUTABLE_CANDIDATES,
   CODEX_REQUIRED_EXEC_HELP_FLAGS,
   CODEX_REQUIRED_ROOT_HELP_FLAGS,
 } from '../../adapters/providers/codex/codex-provider-adapter.ts';
@@ -77,7 +75,12 @@ import {
   type ProviderWrapperProtocolExecution,
   type ProviderWrapperProtocolReceipt,
 } from '../../modules/provider-orchestration/agent-runtime-protocol.ts';
+import type { ProviderDefinitionSnapshot } from '@jigwright/agent-runtime';
 import { spawnBoundedProviderProcess } from './bounded-provider-process.ts';
+import {
+  assertKnownBuiltInProviderDefinitionSnapshot,
+  resolveBuiltInProviderDefinitionSnapshot,
+} from './built-in-provider-definition.ts';
 
 export type {
   ProviderExecutableIdentity,
@@ -182,7 +185,6 @@ export const PROVIDER_RUNNER_RESIDUALS = Object.freeze([
  * command. Reviewed real-path install roots are derived per candidate.
  */
 type ProviderPreflightSpec = {
-  candidates: Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>>;
   helpProbes: ReadonlyArray<{
     args: readonly string[];
     requiredFlags: readonly string[];
@@ -192,14 +194,12 @@ type ProviderPreflightSpec = {
 
 const PROVIDER_PREFLIGHT: Record<ProviderId, ProviderPreflightSpec> = {
   claude: {
-    candidates: CLAUDE_EXECUTABLE_CANDIDATES,
     helpProbes: [
       { args: ['--help'], requiredFlags: CLAUDE_REQUIRED_HELP_FLAGS },
     ],
     authArgs: ['auth', 'status'],
   },
   codex: {
-    candidates: CODEX_EXECUTABLE_CANDIDATES,
     helpProbes: [
       { args: ['--help'], requiredFlags: CODEX_REQUIRED_ROOT_HELP_FLAGS },
       {
@@ -319,11 +319,29 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
     if (!options.enabled) {
       return { status: 'disabled' };
     }
-    const spec = PROVIDER_PREFLIGHT[providerId];
-    const candidates = spec.candidates[options.platform];
-    if (!candidates) {
+    const definitionSnapshot = resolveBuiltInProviderDefinitionSnapshot(
+      providerId,
+      options.platform,
+    );
+    if (definitionSnapshot === null) {
       return { status: 'unsupported-platform' };
     }
+    return preflightSnapshot(definitionSnapshot, options);
+  }
+
+  function preflightSnapshot(
+    definitionSnapshot: ProviderDefinitionSnapshot,
+    options: ProviderPreflightOptions,
+  ): ProviderResolution {
+    const admittedDefinition = assertKnownBuiltInProviderDefinitionSnapshot(
+      definitionSnapshot,
+      {
+        platform: options.platform,
+      },
+    );
+    const providerId = admittedDefinition.providerFamily as ProviderId;
+    const spec = PROVIDER_PREFLIGHT[providerId];
+    const candidates = admittedDefinition.executableCandidates;
 
     // Inspect every fixed candidate; never a caller-PATH or dynamic location. A
     // candidate must be a regular executable whose real path is the candidate
@@ -683,7 +701,15 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
         governedRuntimeInputs,
       );
 
-      const resolution = preflight(input.providerId, {
+      const providerDefinitionSnapshot =
+        resolveBuiltInProviderDefinitionSnapshot(
+          input.providerId,
+          options.platform,
+        );
+      if (providerDefinitionSnapshot === null) {
+        throw providerUnavailable(input.providerId, 'unsupported-platform');
+      }
+      const resolution = preflightSnapshot(providerDefinitionSnapshot, {
         platform: options.platform,
         enabled: true,
         sourceEnvironment: input.sourceEnvironment,
@@ -826,6 +852,7 @@ function createProviderRunner(host: ProviderRunnerHost): ProviderRunner {
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
           executable: identityAfter,
           elapsedMs: completedOutcome.elapsedMs,
+          providerDefinitionSnapshot,
           ...(wrapperProtocolReceipt === null
             ? {}
             : { wrapperProtocolReceipt }),

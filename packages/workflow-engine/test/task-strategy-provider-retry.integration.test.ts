@@ -49,6 +49,8 @@ import {
   sourceRepositoryRoot,
   syncOriginMain,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
+  builtInProviderExecutableIdentityForTest,
 } from './fixture.ts';
 
 test('routine resume replaces a failed implementation transport without changing its semantic subject', () => {
@@ -721,19 +723,11 @@ function completeProvider(
         },
         sameUserProcessConfined: false,
         residuals: [...PROVIDER_RUNNER_RESIDUALS],
-        executable: {
-          candidatePath: '/opt/homebrew/bin/claude',
-          realPath: '/opt/homebrew/bin/claude',
-          device: '1',
-          inode: '2',
-          mode: 0o100755,
-          uid: 501,
-          gid: 20,
-          size: 1024,
-          mtimeNs: '123456789',
-          sha256: 'b'.repeat(64),
-        },
+        executable: builtInProviderExecutableIdentityForTest(input.providerId),
         elapsedMs: 8,
+        providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+          input.providerId,
+        ),
       };
     },
   });

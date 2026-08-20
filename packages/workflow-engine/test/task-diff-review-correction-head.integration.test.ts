@@ -30,6 +30,8 @@ import {
   isWorkflowError,
   sourceRepositoryRoot,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
+  builtInProviderExecutableIdentityForTest,
 } from './fixture.ts';
 
 test('TaskDiff review attributes the latest authenticated correction head instead of the initial implementation', () => {
@@ -375,8 +377,11 @@ function completeProvider(
         },
         sameUserProcessConfined: false,
         residuals: [...PROVIDER_RUNNER_RESIDUALS],
-        executable: executableIdentity(),
+        executable: builtInProviderExecutableIdentityForTest(input.providerId),
         elapsedMs: 8,
+        providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+          input.providerId,
+        ),
       };
     },
   });

@@ -34,6 +34,7 @@ import {
   runtimeRoot,
   sourceRepositoryRoot,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
 } from './fixture.ts';
 
 test('authenticated changes-required Final Assurance can cancel its exact checked finalize transaction', () => {
@@ -293,6 +294,8 @@ function completeProviderReview(
         residuals: [...PROVIDER_RUNNER_RESIDUALS],
         executable: executableIdentity(),
         elapsedMs: 7,
+        providerDefinitionSnapshot:
+          builtInProviderDefinitionSnapshotForTest('claude'),
       };
     },
   });

@@ -58,6 +58,8 @@ import {
   runtimeRoot,
   sourceRepositoryRoot,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
+  builtInProviderExecutableIdentityForTest,
 } from './fixture.ts';
 
 test('cross-agent TDD cannot enter finalize checks without an engine-sealed RED', () => {
@@ -381,8 +383,13 @@ test('cross-agent RED schedules one provider-independent implementation reservat
           },
           sameUserProcessConfined: false,
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
-          executable: executableIdentity(),
+          executable: builtInProviderExecutableIdentityForTest(
+            input.providerId,
+          ),
           elapsedMs: 8,
+          providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+            input.providerId,
+          ),
         };
       },
     });
@@ -1417,8 +1424,13 @@ test('provider worker cannot terminally succeed after its task implementation ow
           },
           sameUserProcessConfined: false,
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
-          executable: executableIdentity(),
+          executable: builtInProviderExecutableIdentityForTest(
+            input.providerId,
+          ),
           elapsedMs: 8,
+          providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+            input.providerId,
+          ),
         };
       },
     });
@@ -1887,8 +1899,13 @@ test('same-provider shortage resumes only through the existing signed collaborat
           },
           sameUserProcessConfined: false,
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
-          executable: executableIdentity(),
+          executable: builtInProviderExecutableIdentityForTest(
+            input.providerId,
+          ),
           elapsedMs: 8,
+          providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+            input.providerId,
+          ),
         };
       },
     });
@@ -3072,8 +3089,11 @@ function completeTaskImplementationProvider(
         },
         sameUserProcessConfined: false,
         residuals: [...PROVIDER_RUNNER_RESIDUALS],
-        executable: executableIdentity(),
+        executable: builtInProviderExecutableIdentityForTest(input.providerId),
         elapsedMs: 8,
+        providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+          input.providerId,
+        ),
       };
     },
   });

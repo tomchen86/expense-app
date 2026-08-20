@@ -40,6 +40,8 @@ import {
   runtimeRoot,
   sourceRepositoryRoot,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
+  builtInProviderExecutableIdentityForTest,
 } from './fixture.ts';
 
 test('public challenge response input cannot claim closure authority', () => {
@@ -426,8 +428,11 @@ function completeFakeProvider(
         },
         sameUserProcessConfined: false,
         residuals: [...PROVIDER_RUNNER_RESIDUALS],
-        executable: executableIdentity(),
+        executable: builtInProviderExecutableIdentityForTest(input.providerId),
         elapsedMs: 7,
+        providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+          input.providerId,
+        ),
       };
     },
   });

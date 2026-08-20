@@ -73,6 +73,8 @@ import {
   runtimeRoot,
   sourceRepositoryRoot,
   writeReadyV2ExemptChange,
+  builtInProviderDefinitionSnapshotForTest,
+  builtInProviderExecutableIdentityForTest,
 } from './fixture.ts';
 
 test('review-diff inspect derives one exact checked candidate subject without rerunning checks', () => {
@@ -292,8 +294,13 @@ test('review-diff lifecycle binds a fresh provider reviewer to the exact Workflo
           },
           sameUserProcessConfined: false,
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
-          executable: executableIdentity(),
+          executable: builtInProviderExecutableIdentityForTest(
+            input.providerId,
+          ),
           elapsedMs: 7,
+          providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+            input.providerId,
+          ),
         };
       },
     });
@@ -484,8 +491,12 @@ test('finalize pauses before staging for a required review and resumes without r
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       }).state,
@@ -604,8 +615,12 @@ test('a corrected ordinary candidate recovers one exact common supersession afte
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       }).state,
@@ -685,8 +700,12 @@ test('a corrected ordinary candidate recovers one exact common supersession afte
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       }).state,
@@ -899,8 +918,12 @@ test('an unchanged candidate reuses its review across fresh check evidence witho
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       }).state,
@@ -1048,8 +1071,12 @@ test('review-diff CLI resumes the durable happy path from ready through fixed-ru
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       }).state,
@@ -1134,8 +1161,12 @@ test('advisory dispositions cannot close a challenge until the shared verifier m
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       }).state,
@@ -1255,8 +1286,12 @@ test('advisory dispositions cannot close a challenge until the shared verifier m
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       },
@@ -1362,8 +1397,13 @@ test('an accepted continuation decision requires a new candidate and never satis
           },
           sameUserProcessConfined: false,
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
-          executable: executableIdentity(),
+          executable: builtInProviderExecutableIdentityForTest(
+            input.providerId,
+          ),
           elapsedMs: 7,
+          providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+            input.providerId,
+          ),
         };
       },
     });
@@ -1418,8 +1458,12 @@ test('an accepted continuation decision requires a new candidate and never satis
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       },
@@ -1679,8 +1723,12 @@ test('same-provider TaskDiffReview consumes one exact grant and satisfies the sh
             },
             sameUserProcessConfined: false,
             residuals: [...PROVIDER_RUNNER_RESIDUALS],
-            executable: executableIdentity(),
+            executable: builtInProviderExecutableIdentityForTest(
+              input.providerId,
+            ),
             elapsedMs: 7,
+            providerDefinitionSnapshot:
+              builtInProviderDefinitionSnapshotForTest(input.providerId),
           };
         },
       }).state,

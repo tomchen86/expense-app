@@ -28,7 +28,11 @@ import {
   runProviderWorker,
 } from '../src/entrypoints/worker/provider-worker.ts';
 import { prepareExecutionMandate } from './execution-mandate-fixture.ts';
-import { createFixtureRepository, git } from './fixture.ts';
+import {
+  builtInProviderDefinitionSnapshotForTest,
+  createFixtureRepository,
+  git,
+} from './fixture.ts';
 
 test('worker persists Retry-After, creates one cheap replacement, and dispatches only when due', () => {
   const fixture = startWorkerFixture('worker-auto-rate-limit');
@@ -992,5 +996,8 @@ function successfulWorkerReport(
       sha256: 'c'.repeat(64),
     },
     elapsedMs: 1,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }

@@ -20,6 +20,7 @@ import {
   isWorkflowError,
   runtimeRoot,
   sourceRepositoryRoot,
+  builtInProviderDefinitionSnapshotForTest,
 } from './fixture.ts';
 
 const REQUIRED_CONTROLS = [
@@ -502,6 +503,9 @@ test('provider availability pilot durably verifies a credential-safe ordinary Co
           residuals: [...PROVIDER_RUNNER_RESIDUALS],
           executable: executableIdentity(input.providerId),
           elapsedMs: input.providerId === 'codex' ? 12 : 14,
+          providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+            input.providerId,
+          ),
         };
       },
     });

@@ -32,6 +32,7 @@ import {
 } from '../src/application/propose/propose-orchestrator.ts';
 import { installPlanReviewAuthority } from './plan-review-authority-fixture.ts';
 import { driveProposeToDispositions } from './propose-drive-fixture.ts';
+import { builtInProviderDefinitionSnapshotForTest } from './fixture.ts';
 
 const TERM = 'AdaptiveSampleNeedle';
 const FIRST_MARKER = 'FIRST_ADAPTIVE_CLASS';
@@ -527,5 +528,8 @@ function fakePlanReviewRunnerReport(
       sha256: 'b'.repeat(64),
     },
     elapsedMs: 5,
+    providerDefinitionSnapshot: builtInProviderDefinitionSnapshotForTest(
+      request.providerId,
+    ),
   };
 }
