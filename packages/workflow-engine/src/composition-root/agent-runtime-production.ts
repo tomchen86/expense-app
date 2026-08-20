@@ -26,4 +26,5 @@ export type {
   AgentRuntimeSingleShotOptions,
   AgentRuntimeSingleShotReport,
   ProviderInvocationAcceptanceBinding,
+  ProviderWrapperProtocolReceipt,
 } from '../modules/provider-orchestration/agent-runtime-port.ts';

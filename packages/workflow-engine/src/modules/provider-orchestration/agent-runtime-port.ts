@@ -10,6 +10,8 @@ import type {
   ProviderWrapperProtocolReceipt,
 } from './agent-runtime-protocol.ts';
 
+export type { ProviderWrapperProtocolReceipt } from './agent-runtime-protocol.ts';
+
 /** JSON data accepted as one exact provider's semantic-output schema. */
 export type AgentRuntimeJsonValue =
   | null

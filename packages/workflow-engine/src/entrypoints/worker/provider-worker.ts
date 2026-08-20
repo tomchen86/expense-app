@@ -21,8 +21,8 @@ import type {
   AgentRuntimeSingleShotOptions,
   AgentRuntimeSingleShotReport,
   ProviderInvocationAcceptanceBinding,
+  ProviderWrapperProtocolReceipt,
 } from '../../composition-root/agent-runtime-production.ts';
-import type { ProviderWrapperProtocolReceipt } from '../../modules/provider-orchestration/agent-runtime-protocol.ts';
 import { readInvestigationSession } from '../../runtime/storage-journal/investigation-session-store.ts';
 import { loadInvestigationRuntimeContext } from '../../composition-root/lifecycle-context.ts';
 import { productionAgentRuntime } from '../../composition-root/agent-runtime-production.ts';
